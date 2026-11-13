@@ -4,3 +4,4 @@
 .vs/
 .vscode/
 CMakeUserPresets.json
+/deps/

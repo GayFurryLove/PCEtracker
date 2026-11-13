@@ -4,29 +4,49 @@
 Клавиатурный процесс в духе ProTracker, ориентация на реальные возможности чипа,
 экспорт в WAV и в родные форматы консоли (HES, ROM).
 
-> Статус: **этап 2 из 8** — ядро звука HuC6280, движок трекера, текстовый формат песен,
-> рендер в WAV. Графического интерфейса пока нет: песни пишутся в текстовом файле.
+> Статус: **этап 3 из 8** — ядро звука HuC6280, движок трекера, формат песен, рендер в WAV
+> и окно трекера (редактор паттернов, ордер, клавиатура, undo). Редактор инструментов — этап 4.
+
+![PCEtracker](docs/screenshot.png)
+
+## Запуск
+
+```bash
+./build/pcetracker songs/demo.pcet     # открыть песню (или новое имя — новая песня)
+```
+
+ENTER — играть/стоп, SPACE — режим записи, F12 — все клавиши. Ноты — две нижние/верхние
+«пианинные» строки клавиатуры (по физическому положению, раскладка не важна).
+
+Настройки — `pcetracker.cfg` (создаётся при первом запуске; Linux:
+`~/.local/share/pcetracker/pcetracker/`, Windows: `%APPDATA%\pcetracker\pcetracker\`):
+`scale` (масштаб окна), `software_render`, `audio_buffer` (увеличьте до 2048/4096,
+если звук трещит на слабом CPU), `revision` (6280 / 6280a).
 > План и список вырезанного: [docs/ROADMAP.md](docs/ROADMAP.md).
 > Устройство модулей: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Сборка на Linux (в т.ч. antiX i386)
 
 ```bash
-sudo apt install build-essential cmake git
-git clone https://github.com/<аккаунт>/PCEtracker.git
+sudo apt install build-essential cmake git libsdl2-dev
+git clone https://github.com/GayFurryLove/PCEtracker.git
 cd PCEtracker
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-SDL2 (`libsdl2-dev`) понадобится начиная с этапа 3 (интерфейс), сейчас не нужен.
+Без `libsdl2-dev` соберутся только консольные утилиты и тесты (окно трекера пропускается).
 
 Если `ctest --test-dir` не поддерживается (CMake < 3.20): `cd build && ctest --output-on-failure`.
 
 ## Сборка на Windows (x64)
 
-Нужны CMake и Visual Studio Build Tools (C++).
+Нужны CMake и Visual Studio Build Tools (C++). SDL2: распакуйте
+`SDL2-devel-2.32.10-VC.zip` (релизы libsdl-org/SDL) в папку `deps/` — CMake найдёт его сам
+и положит `SDL2.dll` рядом с `pcetracker.exe`.
+
+Готовые сборки (Linux i386 и Windows x64) — во вкладке **Actions** → последний запуск → Artifacts.
 
 ```bash
 cmake -S . -B build -A x64

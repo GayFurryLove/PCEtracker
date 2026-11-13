@@ -29,7 +29,31 @@ Player::Player(const Song& song) : song_(song) {
   for (int c = 0; c < kChannels; ++c) ch_[c].muted = false;
   playing_ = false;
   stopping_ = false;
+  jam_ = false;
   resetState();
+}
+
+void Player::jamNote(int c, uint8_t note, int instrument) {
+  if (c < 0 || c >= kChannels || note >= kNoteCount) return;
+  if (!playing_ && !jam_) resetState(); // fresh driver state, like a new song start
+  jam_ = true;
+  Channel& ch = ch_[c];
+  if (instrument >= 0 && instrument < (int)song_.instruments.size()) {
+    ch.inst = (uint8_t)instrument;
+    ch.volume = clampi(song_.instruments[instrument].volume, 0, kVolumeMax);
+  }
+  ch.arp = ch.volSlide = ch.portaUp = ch.portaDown = 0;
+  ch.tonePorta = ch.vibratoOn = false;
+  ch.cutAt = 0xFF;
+  ch.retrigEvery = 0;
+  trigger(c, note);
+}
+
+void Player::jamRelease(int c) {
+  if (c < 0 || c >= kChannels || !jam_) return;
+  Cell off;
+  off.note = NOTE_OFF;
+  processRow(c, off);
 }
 
 void Player::resetState() {
@@ -85,6 +109,7 @@ void Player::playSong(int order, int row) {
   row_ = row < 0 ? 0 : row;
   playing_ = true;
   stopping_ = false;
+  jam_ = false;
 }
 
 void Player::playPattern(int pattern, int row) {
@@ -94,10 +119,11 @@ void Player::playPattern(int pattern, int row) {
   row_ = row < 0 ? 0 : row;
   playing_ = true;
   stopping_ = false;
+  jam_ = false;
 }
 
 void Player::stop() {
-  if (playing_) stopping_ = true;
+  if (playing_ || jam_) stopping_ = true;
 }
 
 void Player::setMute(int ch, bool m) {
@@ -386,7 +412,22 @@ void Player::advanceRow() {
 }
 
 bool Player::tick(RegisterSink& out) {
-  if (!playing_) return false;
+  if (!playing_) {
+    if (!jam_) return false;
+    if (stopping_) {
+      for (int c = 0; c < kChannels; ++c) { ch_[c].active = false; compute(c); }
+      emit(out);
+      jam_ = stopping_ = false;
+      return true;
+    }
+    // Preview only: no rows, but macros and the driver output keep running.
+    for (int c = 0; c < kChannels; ++c) {
+      compute(c);
+      advanceMacros(c);
+    }
+    emit(out);
+    return true;
+  }
   if (stopping_) {
     for (int c = 0; c < kChannels; ++c) { ch_[c].active = false; compute(c); }
     emit(out);

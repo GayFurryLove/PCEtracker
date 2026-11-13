@@ -24,7 +24,7 @@
 | 6 | Экспорт WAV | `src/audio/wav_writer.*`, `tools/pcet_render` | ✔ |
 | 7 | Экспорт HES | `src/export` | — |
 | 8 | Экспорт ROM | `src/export` | — |
-| 9 | Интерфейс | `src/ui` | — |
+| 9 | Интерфейс | `src/ui` (SDL2), логика правки — `src/tracker/editor.*` | ✔ |
 | 10 | Файлы проектов | `src/project/text_format.*` | ✔ |
 
 ## Модуль 2: `pce::Player` (`src/tracker/player.h`)

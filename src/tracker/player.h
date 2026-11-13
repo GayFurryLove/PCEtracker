@@ -39,6 +39,12 @@ public:
   // Run one 60 Hz tick. Returns false once the player is stopped and silent.
   bool tick(RegisterSink& out);
 
+  // Note preview while editing (works when the song is stopped): plays `note`
+  // with an instrument on a channel through the same driver path.
+  void jamNote(int ch, uint8_t note, int instrument);
+  void jamRelease(int ch);       // key-off for that channel's preview note
+  bool jamming() const { return jam_; }
+
   void setMute(int ch, bool muted);
   bool muted(int ch) const { return ch_[ch].muted; }
   void solo(int ch); // mute every other channel; solo(-1) unmutes all
@@ -108,7 +114,7 @@ private:
   int hwSelect_, hwMainVol_, hwLfoFreq_, hwLfoCtrl_;
   int mainVol_, lfoFreq_, lfoCtrl_;
 
-  bool playing_, stopping_, patternMode_, looped_;
+  bool playing_, stopping_, patternMode_, looped_, jam_;
   int order_, row_, tick_, speed_;
   int loopPattern_;
   int breakRow_, jumpOrder_; // -1 = none

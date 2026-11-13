@@ -6,31 +6,63 @@ on:
 
 jobs:
   linux-i386:
-    # 32-bit x86 build (i686, no SSE2 requirement) with gcc-multilib.
-    # The x86_64 kernel runs the 32-bit test binaries natively.
+    # 32-bit x86 build (i686, no SSE2 requirement) with gcc-multilib and SDL2 :i386.
+    # The x86_64 kernel runs the 32-bit binaries natively.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install 32-bit toolchain
+      - name: Install 32-bit toolchain and SDL2
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends gcc-multilib g++-multilib
+          sudo apt-get install -y -qq --no-install-recommends gcc-multilib g++-multilib pkg-config libsdl2-dev:i386
       - name: Configure
-        run: cmake -S . -B build-i386 -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-i386.cmake
+        run: |
+          cmake -S . -B build-i386 -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-i386.cmake \
+            -DCMAKE_PREFIX_PATH=/usr/lib/i386-linux-gnu/cmake
       - name: Build
         run: cmake --build build-i386 -j2
-      - name: Check binary is 32-bit
-        run: file build-i386/test_psg build-i386/psg_demo | tee /dev/stderr | grep -qE "ELF 32-bit LSB.*Intel (80386|i386)"
+      - name: Check binaries are 32-bit
+        run: file build-i386/test_psg build-i386/pcetracker | tee /dev/stderr | grep -cE "ELF 32-bit LSB.*Intel (80386|i386)" | grep -q 2
       - name: Test
         run: ctest --test-dir build-i386 --output-on-failure
+      - name: UI screenshot (offscreen, software renderer)
+        run: |
+          SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software \
+            ./build-i386/pcetracker songs/demo.pcet --screenshot ui-i386.bmp
+          file ui-i386.bmp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcetracker-linux-i386
+          path: |
+            build-i386/pcetracker
+            build-i386/pcet_render
+            build-i386/psg_demo
+            songs/demo.pcet
+            ui-i386.bmp
 
   windows-x64:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Get SDL2
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-VC.zip -OutFile sdl.zip
+          Expand-Archive sdl.zip -DestinationPath deps
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
         run: cmake --build build --config Release
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcetracker-windows-x64
+          path: |
+            build/Release/pcetracker.exe
+            build/Release/SDL2.dll
+            build/Release/pcet_render.exe
+            build/Release/psg_demo.exe
+            songs/demo.pcet

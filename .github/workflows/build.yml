@@ -1,0 +1,35 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-i386:
+    # Native 32-bit userland in Docker. The job itself runs on the x86_64 host,
+    # because GitHub's own actions (checkout etc.) cannot run inside i386 containers.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test in Debian i386
+        run: |
+          docker run --rm --platform linux/386 -v "$PWD:/src" -w /src i386/debian:bookworm bash -ec '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends build-essential cmake > /dev/null
+            uname -m; gcc --version | head -1; cmake --version | head -1
+            cmake -S . -B build-i386 -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-march=i686" -DCMAKE_CXX_FLAGS="-march=i686"
+            cmake --build build-i386 -j2
+            ctest --test-dir build-i386 --output-on-failure
+            file build-i386/test_psg 2>/dev/null || true
+          '
+
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure

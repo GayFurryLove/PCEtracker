@@ -1,0 +1,6 @@
+/build*/
+/out/
+*.wav
+.vs/
+.vscode/
+CMakeUserPresets.json

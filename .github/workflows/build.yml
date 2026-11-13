@@ -20,7 +20,7 @@ jobs:
       - name: Build
         run: cmake --build build-i386 -j2
       - name: Check binary is 32-bit
-        run: file build-i386/test_psg build-i386/psg_demo | tee /dev/stderr | grep -q "ELF 32-bit LSB.*Intel 80386"
+        run: file build-i386/test_psg build-i386/psg_demo | tee /dev/stderr | grep -qE "ELF 32-bit LSB.*Intel (80386|i386)"
       - name: Test
         run: ctest --test-dir build-i386 --output-on-failure
 

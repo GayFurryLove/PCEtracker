@@ -10,7 +10,7 @@ namespace pce {
 
 struct Config {
   int scale;          // integer window scale: 1 = 1024x600
-  bool fullscreen;
+  int fullscreen;     // 0 window, 1 fullscreen, 2 auto (fullscreen if the window does not fit)
   bool softwareRender;// force SDL's software renderer (no GPU needed)
   bool vsync;
   int audioRate;      // output sample rate

@@ -9,6 +9,7 @@
 
 #include "tracker/song.h"
 
+#include <string>
 #include <vector>
 
 namespace pce {
@@ -23,6 +24,12 @@ enum EditColumn {
   COL_FX2_CMD, COL_FX2_HI, COL_FX2_LO,
   COL_COUNT
 };
+
+// Instrument parameters editable from the instrument screen.
+enum InstField { IF_TYPE = 0, IF_WAVE, IF_SAMPLE, IF_VOLUME, IF_PHASE, IF_COUNT };
+
+enum WavePreset { WP_SINE = 0, WP_SQUARE, WP_SAW, WP_TRIANGLE, WP_NOISE, WP_CLEAR,
+                  WP_INVERT, WP_SHIFT, WP_HALF, WP_COUNT };
 
 class Editor {
 public:
@@ -83,6 +90,30 @@ public:
   void changePatternLength(int delta);
   void changeSpeed(int delta);
 
+  // --- instruments, waves, macros (instrument screen) ------------------------
+  // Edits apply to `instrument` (the current instrument). Instrument edits are
+  // undoable; consecutive edits with the same non-zero gesture key (mouse
+  // drawing) merge into one undo step until endGesture().
+  Instrument& currentInstrument();
+  void setInstrumentName(const std::string& name);
+  void changeInstrumentField(int field, int delta);
+  void newInstrument();
+  void cloneInstrument();
+  int currentWaveIndex() const;
+  void setWaveSample(int i, int value, int gesture = 0);
+  void applyWavePreset(int preset);
+  void newWave();                       // copy of the current wave, assigned to the instrument
+  void macroSet(int kind, int i, int value, int gesture = 0); // grows the macro if needed
+  void macroInsert(int kind, int i);
+  void macroDelete(int kind, int i);
+  void macroToggleLoop(int kind, int i);
+  void macroToggleRelease(int kind, int i);
+  void macroClear(int kind);
+  static void macroRange(int kind, int* lo, int* hi);
+  int addSample(const Sample& s);       // appends, assigns to the instrument; returns index (-1 = full)
+  void setSongTitle(const std::string& t);
+  void endGesture() { gesture_ = 0; }
+
   // --- undo -------------------------------------------------------------------
   bool undo();
   bool redo();
@@ -98,11 +129,17 @@ private:
     std::vector<Pattern> patterns;
     int speed;
     int order, row, ch, col;
+    bool instruments;
+    std::vector<Instrument> insts;
+    std::vector<Wave> waves;
+    std::string title;
+    int instrument;
   };
 
   Snapshot capture(bool wholeSong) const;
   void restore(const Snapshot& s);
   void pushUndo(bool wholeSong = false);
+  void pushInstrumentUndo(int gesture = 0);
   void advance();
   Cell& cell();
   void clampCursor();
@@ -115,6 +152,7 @@ private:
   int clipW_, clipH_;
   std::vector<Snapshot> undo_, redo_;
   bool dirty_;
+  int gesture_;
 };
 
 } // namespace pce

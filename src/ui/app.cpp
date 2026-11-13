@@ -5,6 +5,7 @@
 #include "project/text_format.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 namespace pce {
@@ -19,6 +20,11 @@ const int kPatTop = 16;         // first pattern row on screen
 const int kPatBottom = 73;      // last pattern row on screen
 const int kChanX0 = 4;          // first channel column
 const int kChanW = 20;          // cells per channel (17 used + gap)
+// Top panels: equal 2-cell gaps, the last one ends at the right edge.
+const int kOrderX = 1, kOrderW = 12;
+const int kInstX = 15, kInstW = 32;
+const int kSongX = 49, kSongW = 28;
+const int kChanPanelX = 79, kChanPanelW = 48;
 
 // Column offsets inside "C-4 00 1F 422 ..." for each EditColumn.
 const int kColOff[COL_COUNT] = { 0, 4, 5, 7, 8, 10, 11, 12, 14, 15, 16 };
@@ -55,7 +61,8 @@ App::App()
   : editor_(song_), renderer_(0), window_(0), sdlRenderer_(0), audioDev_(0), fifoHead_(0),
     messageTime_(0), showHelp_(false), quit_(false), quitArmed_(false), redraw_(true),
     followPlay_(true), jamCh_(-1), jamKey_(SDL_SCANCODE_UNKNOWN), playing_(false),
-    playOrder_(0), playRow_(0) {
+    playOrder_(0), playRow_(0), view_(VIEW_PATTERN), focus_(FOCUS_PARAMS), paramRow_(0),
+    waveCursor_(0), macroKind_(0), macroCursor_(0), drag_(0), textEdit_(TEXT_NONE) {
   for (int c = 0; c < kChannels; ++c) { muted_[c] = false; views_[c] = Player::ChannelView(); }
 }
 
@@ -70,8 +77,17 @@ App::~App() {
 // --- setup ------------------------------------------------------------------
 
 bool App::initVideo() {
-  int w = kScreenW * cfg_.scale, h = kScreenH * cfg_.scale;
-  Uint32 flags = cfg_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+  // Fit the screen: shrink the scale until the window fits the usable desktop
+  // area; if even scale 1 does not fit (1024x600 netbook with title bar and
+  // taskbar), go borderless fullscreen in "auto" mode.
+  SDL_Rect usable = { 0, 0, 0, 0 };
+  bool known = SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0;
+  int scale = cfg_.scale;
+  while (known && scale > 1 && (kScreenW * scale > usable.w || kScreenH * scale > usable.h)) --scale;
+  int w = kScreenW * scale, h = kScreenH * scale;
+  bool tooBig = known && (w > usable.w || h > usable.h - 32); // leave room for a title bar
+  bool full = cfg_.fullscreen == 1 || (cfg_.fullscreen == 2 && tooBig);
+  Uint32 flags = SDL_WINDOW_RESIZABLE | (full ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
   window_ = SDL_CreateWindow("PCEtracker", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
   if (!window_) return false;
   Uint32 rflags = cfg_.softwareRender ? SDL_RENDERER_SOFTWARE : 0;
@@ -81,8 +97,16 @@ bool App::initVideo() {
   if (!sdlRenderer_) return false;
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
   SDL_RenderSetLogicalSize(sdlRenderer_, kScreenW, kScreenH);
-  SDL_RenderSetIntegerScale(sdlRenderer_, SDL_TRUE);
+  updateScaling();
   return screen_.init(sdlRenderer_);
+}
+
+// Integer scaling keeps pixels sharp, but SDL cannot shrink with it: when the
+// window is smaller than 1024x600 the picture would be cut off and shifted.
+void App::updateScaling() {
+  int ow = 0, oh = 0;
+  SDL_GetRendererOutputSize(sdlRenderer_, &ow, &oh);
+  SDL_RenderSetIntegerScale(sdlRenderer_, (ow >= kScreenW && oh >= kScreenH) ? SDL_TRUE : SDL_FALSE);
 }
 
 bool App::initAudio() {
@@ -136,6 +160,7 @@ int App::run(int argc, char** argv) {
     if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--edit")) editor_.editMode = true;
     else if (!strcmp(argv[i], "--help-screen")) showHelp_ = true;
+    else if (!strcmp(argv[i], "--instrument") && i + 1 < argc) { view_ = VIEW_INSTRUMENT; editor_.instrument = atoi(argv[++i]); }
     else args.push_back(argv[i]);
   }
   if (!args.empty()) {
@@ -163,11 +188,13 @@ int App::run(int argc, char** argv) {
     fprintf(stderr, "video init failed: %s\n", SDL_GetError());
     return 1;
   }
+  SDL_StopTextInput(); // only on while a name is being typed
   if (shot) {
     // Render one frame to a BMP and exit (documentation, UI checks without a display).
     draw();
-    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, kScreenW * cfg_.scale, kScreenH * cfg_.scale, 32,
-                                                    SDL_PIXELFORMAT_ARGB8888);
+    int ow = 0, oh = 0;
+    SDL_GetRendererOutputSize(sdlRenderer_, &ow, &oh);
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, ow, oh, 32, SDL_PIXELFORMAT_ARGB8888);
     bool ok = s && SDL_RenderReadPixels(sdlRenderer_, 0, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0 &&
               SDL_SaveBMP(s, shot) == 0;
     if (s) SDL_FreeSurface(s);
@@ -190,9 +217,18 @@ int App::run(int argc, char** argv) {
             else quit_ = true;
             break;
           case SDL_KEYDOWN: handleKey(e.key); break;
+          case SDL_TEXTINPUT: if (textEdit_) handleTextInput(e.text.text); break;
+          case SDL_DROPFILE: importSample(e.drop.file); SDL_free(e.drop.file); break;
+          case SDL_MOUSEMOTION: if (drag_) handleMouse(e); break;
+          case SDL_MOUSEBUTTONUP:
+            if (drag_) { Guard g(audioDev_); editor_.endGesture(); drag_ = 0; }
+            break;
           case SDL_KEYUP: handleKeyUp(e.key); break;
           case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEWHEEL: handleMouse(e); break;
-          case SDL_WINDOWEVENT: redraw_ = true; break;
+          case SDL_WINDOWEVENT:
+            if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) updateScaling();
+            redraw_ = true;
+            break;
           default: break;
         }
       } while (SDL_PollEvent(&e));
@@ -339,6 +375,12 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
 
   Guard g(audioDev_); // every edit below changes data the audio thread reads
 
+  if (textEdit_) { handleTextKey(k); return; }
+  if (sc == SDL_SCANCODE_F9) { view_ = VIEW_PATTERN; return; }
+  if (sc == SDL_SCANCODE_F10) { view_ = VIEW_INSTRUMENT; return; }
+  if (ctrl && sc == SDL_SCANCODE_T) { startTextEdit(TEXT_SONG_TITLE); return; }
+  if (view_ == VIEW_INSTRUMENT && handleInstrumentKey(k)) return;
+
   // --- global keys ---
   if (ctrl) {
     switch (sc) {
@@ -478,6 +520,11 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
 void App::handleMouse(const SDL_Event& e) {
   redraw_ = true;
   Guard g(audioDev_);
+  if (view_ == VIEW_INSTRUMENT && !showHelp_ && (e.type != SDL_MOUSEBUTTONDOWN || e.button.y / kCell >= kPatHeader)) {
+    handleInstrumentMouse(e);
+    return;
+  }
+  if (e.type == SDL_MOUSEMOTION) return;
   if (e.type == SDL_MOUSEWHEEL) {
     editor_.moveRow(e.wheel.y > 0 ? -4 : 4);
     return;
@@ -499,13 +546,13 @@ void App::handleMouse(const SDL_Event& e) {
     return;
   }
   // Order list
-  if (cx >= 1 && cx < 13 && cy >= kTopRow + 1 && cy < kTopRow + kPanelRows) {
+  if (cx >= kOrderX && cx < kOrderX + kOrderW && cy >= kTopRow + 1 && cy < kTopRow + kPanelRows) {
     int o = listTop(editor_.order(), (int)song_.orders.size(), kListVisible) + (cy - kTopRow - 1);
     if (o < (int)song_.orders.size()) editor_.setOrder(o);
     return;
   }
   // Instrument list
-  if (cx >= 15 && cx < 48 && cy >= kTopRow + 1 && cy < kTopRow + kPanelRows) {
+  if (cx >= kInstX && cx < kInstX + kInstW && cy >= kTopRow + 1 && cy < kTopRow + kPanelRows) {
     int i = listTop(editor_.instrument, (int)song_.instruments.size(), kListVisible) + (cy - kTopRow - 1);
     if (i >= 0 && i < (int)song_.instruments.size()) editor_.instrument = i;
   }
@@ -516,11 +563,12 @@ void App::handleMouse(const SDL_Event& e) {
 void App::draw() {
   screen_.clear();
   drawHeader();
-  drawOrders(1, kTopRow, kPanelRows);
-  drawInstruments(15, kTopRow, kPanelRows);
-  drawSongInfo(50, kTopRow);
-  drawChannels(80, kTopRow);
-  drawPattern(kPatTop, kPatBottom);
+  drawOrders(kOrderX, kTopRow, kPanelRows);
+  drawInstruments(kInstX, kTopRow, kPanelRows);
+  drawSongInfo(kSongX, kTopRow);
+  drawChannels(kChanPanelX, kTopRow);
+  if (view_ == VIEW_INSTRUMENT) drawInstrumentView(kPatHeader, kPatBottom);
+  else drawPattern(kPatTop, kPatBottom);
   drawStatus();
   if (showHelp_) drawHelp();
   screen_.present();
@@ -537,14 +585,15 @@ void App::drawHeader() {
 }
 
 void App::drawOrders(int x, int y, int h) {
-  screen_.textBg(x, y, " ORDER      ", C_BLACK, C_ORANGE);
+  screen_.fill(x, y, kOrderW, 1, C_ORANGE);
+  screen_.text(x + 1, y, "ORDER", C_BLACK);
   int n = (int)song_.orders.size();
   int first = listTop(editor_.order(), n, h - 1);
   for (int i = 0; i < h - 1; ++i) {
     int o = first + i;
     if (o < 0 || o >= n) continue;
     char b[16];
-    snprintf(b, sizeof b, " %02X  %02X ", o, song_.orders[o]);
+    snprintf(b, sizeof b, " %02X  %02X     ", o, song_.orders[o]);
     bool cur = o == editor_.order();
     if (cur) screen_.textBg(x, y + 1 + i, b, C_BLACK, C_ORANGE);
     else screen_.text(x, y + 1 + i, b, C_WHITE);
@@ -553,23 +602,27 @@ void App::drawOrders(int x, int y, int h) {
 }
 
 void App::drawInstruments(int x, int y, int h) {
-  screen_.textBg(x, y, " INSTRUMENTS                      ", C_BLACK, C_ORANGE);
+  screen_.fill(x, y, kInstW, 1, C_ORANGE);
+  screen_.text(x + 1, y, "INSTRUMENTS", C_BLACK);
   int n = (int)song_.instruments.size();
   int first = listTop(editor_.instrument, n, h - 1);
   for (int i = 0; i < h - 1; ++i) {
     int k = first + i;
     if (k < 0 || k >= n) continue;
     char b[48];
-    snprintf(b, sizeof b, " %02X %-29.29s", k, song_.instruments[k].name.c_str());
+    snprintf(b, sizeof b, " %02X %-27.27s", k, song_.instruments[k].name.c_str());
     if (k == editor_.instrument) screen_.textBg(x, y + 1 + i, b, C_BLACK, C_ORANGE);
     else screen_.text(x, y + 1 + i, b, C_WHITE);
   }
 }
 
 void App::drawSongInfo(int x, int y) {
-  screen_.textBg(x, y, " SONG                       ", C_BLACK, C_ORANGE);
+  screen_.fill(x, y, kSongW, 1, C_ORANGE);
+  screen_.text(x + 1, y, "SONG", C_BLACK);
   char b[64];
-  snprintf(b, sizeof b, "%-27.27s", song_.title.empty() ? "(untitled)" : song_.title.c_str());
+  std::string title = textEdit_ == TEXT_SONG_TITLE ? textBuf_ + "_" : (song_.title.empty() ? "(untitled)  CTRL+T" : song_.title);
+  if (title.size() > 26) title = title.substr(title.size() - 26);
+  snprintf(b, sizeof b, "%-26.26s", title.c_str());
   screen_.text(x + 1, y + 1, b, C_WHITE);
   struct { const char* k; std::string v; } rows[] = {
     { "SPEED", hex2(song_.speed) },
@@ -587,7 +640,8 @@ void App::drawSongInfo(int x, int y) {
 }
 
 void App::drawChannels(int x, int y) {
-  screen_.textBg(x, y, " CHANNELS                                     ", C_BLACK, C_ORANGE);
+  screen_.fill(x, y, kChanPanelW, 1, C_ORANGE);
+  screen_.text(x + 1, y, "CHANNELS", C_BLACK);
   for (int c = 0; c < kChannels; ++c) {
     int ry = y + 2 + c;
     char b[16];
@@ -631,6 +685,12 @@ void App::drawPattern(int top, int bottom) {
   const int nextIdx = song_.orders[nextOrder];
   const Pattern* next = nextIdx < (int)song_.patterns.size() ? &song_.patterns[nextIdx] : 0;
 
+  if (next && p.rows - first < bottom - top + 1) {
+    char b[32];
+    snprintf(b, sizeof b, "NEXT %02X:%02X", nextOrder, nextIdx);
+    screen_.text(kCols - 1 - (int)strlen(b), kPatHeader, b, C_BLACK);
+  }
+
   for (int y = top; y <= bottom; ++y) {
     int r = first + (y - top);
     if (r < 0) continue;
@@ -641,12 +701,7 @@ void App::drawPattern(int top, int bottom) {
       if (!next || r - p.rows >= next->rows) continue;
       src = next;
       sr = r - p.rows;
-      if (sr == 0) {
-        screen_.fillPx(0, y * kCell, kScreenW, 1, C_ORANGE);
-        char b[32];
-        snprintf(b, sizeof b, "NEXT %02X:%02X", nextOrder, nextIdx);
-        screen_.text(kCols - 11, y, b, C_ORANGE_MID);
-      }
+      if (sr == 0) screen_.fillPx(0, y * kCell, kScreenW, 1, C_ORANGE);
     } else {
       // Row background: cursor row, beat rows (every 4), play position.
       if (y == center) screen_.fill(0, y, kCols, 1, editor_.editMode ? C_ORANGE_MID : C_ORANGE_DK);
@@ -713,7 +768,9 @@ void App::drawPattern(int top, int bottom) {
 void App::drawStatus() {
   screen_.fill(0, kRows - 1, kCols, 1, C_ORANGE);
   std::string s = message_.empty()
-      ? std::string("SPACE edit  ENTER play/stop  SHIFT+ENTER loop pattern  F1/F2 octave  F3/F4 instr  F12 help")
+      ? std::string(view_ == VIEW_INSTRUMENT
+                    ? "TAB focus  ARROWS edit  NOTE KEYS preview  ENTER play/stop  F9 patterns  F12 help"
+                    : "SPACE edit  ENTER play/stop  SHIFT+ENTER loop  F1/F2 octave  F3/F4 instr  F10 instrument  F12 help")
       : message_;
   screen_.text(1, kRows - 1, s.c_str(), C_BLACK);
 }
@@ -742,6 +799,7 @@ void App::drawHelp() {
     "ALT+LEFT/RIGHT      song speed -/+",
     "",
     "F1/F2 octave   F3/F4 instrument   F5/F6 edit step   CTRL+1..6 mute   CTRL+SHIFT+1..6 solo",
+    "F9 pattern screen   F10 instrument screen   CTRL+T song title   drop .wav = DDA sample",
     "CTRL+S save    CTRL+E export WAV  CTRL+Q quit",
     "",
     "Effects: 0 arp  1/2 slide  3 porta  4 vibrato  8 pan  A vol slide  B jump  C cut  D break",

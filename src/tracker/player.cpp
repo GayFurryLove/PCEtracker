@@ -82,6 +82,10 @@ void Player::resetState() {
     ch.wave = -1;
     ch.noise = 0;
     ch.phaseReset = false;
+    ch.ddaSample = -1;
+    ch.ddaOn = false;
+    ch.ddaPos = 0;
+    ch.ddaStepV = 256;
     ch.outNote = 45;
     ch.outVol = 0;
     ch.outPeriod = ch.period;
@@ -156,10 +160,19 @@ void Player::trigger(int c, uint8_t note) {
   ch.vibPos = 0;
   ch.period = notePeriod(note);
   ch.tonePortaTarget = ch.period;
+  ch.ddaSample = -1;
+  ch.ddaOn = false;
   if (ch.inst < song_.instruments.size()) {
     const Instrument& in = song_.instruments[ch.inst];
-    if (in.wave < song_.waves.size()) ch.wave = in.wave;
-    ch.phaseReset = in.resetPhase;
+    if (in.sample >= 0 && in.sample < (int)song_.samples.size() && !song_.samples[in.sample].data.empty()) {
+      ch.ddaSample = in.sample;
+      ch.ddaOn = true;
+      ch.ddaPos = 0;
+      ch.ddaStepV = ddaStep(note);
+    } else {
+      if (in.wave < song_.waves.size()) ch.wave = in.wave;
+      ch.phaseReset = in.resetPhase;
+    }
   }
   if (ch.wave < 0 && !song_.waves.empty()) ch.wave = 0;
 }
@@ -305,12 +318,13 @@ void Player::compute(int c) {
   if (ch.vibratoOn && ch.vibDepth) per += (kSine[ch.vibPos & 31] * ch.vibDepth) >> 6;
   ch.outPeriod = clampi(per, 1, 4095);
   ch.outNote = (uint8_t)n;
+  if (ch.ddaSample >= 0) ch.ddaStepV = ddaStep(n); // samples follow note + arpeggio
 
   // Volume: the PSG volume is logarithmic (~1.5 dB/step), so combining
   // channel volume and the volume macro is an addition of attenuations.
   int mv = clampi(macroValue(c, MACRO_VOLUME, kVolumeMax), 0, kVolumeMax);
   int v = ch.volume - (kVolumeMax - mv);
-  if (!ch.active || ch.muted || v < 0) v = 0;
+  if (!ch.active || ch.muted || v < 0 || (ch.ddaSample >= 0 && !ch.ddaOn)) v = 0;
   ch.outVol = (uint8_t)v;
 
   int w = macroValue(c, MACRO_WAVE, -1);
@@ -337,8 +351,9 @@ void Player::emit(RegisterSink& out) {
   for (int c = 0; c < kChannels; ++c) {
     Channel& ch = ch_[c];
     Shadow& s = hw_[c];
-    const bool upload = ch.used && ch.wave >= 0 && ch.wave != s.wave;
-    if (upload || (ch.phaseReset && ch.used)) {
+    const bool dda = ch.ddaSample >= 0;
+    const bool upload = !dda && ch.used && ch.wave >= 0 && ch.wave != s.wave;
+    if (!dda && (upload || (ch.phaseReset && ch.used))) {
       // Wave RAM can only be written with the channel off. DDA on -> off
       // rewinds the wave pointer to 0, then 32 writes fill the table.
       selectChannel(out, c);
@@ -373,12 +388,39 @@ void Player::emit(RegisterSink& out) {
     }
     // A channel that has played stays enabled at volume 0 when silent:
     // switching it off would cause a DC click on the HuC6280.
-    int ctrl = ch.used ? (0x80 | ch.outVol) : 0x00;
+    // DDA channels run with bit 6 set; the samples arrive via ddaTick().
+    int ctrl = !ch.used ? 0x00 : (dda && ch.ddaOn) ? (0xC0 | ch.outVol) : (0x80 | ch.outVol);
     if (ctrl != s.control) {
       selectChannel(out, c);
       out.write(REG_CONTROL, (uint8_t)ctrl);
       s.control = ctrl;
     }
+  }
+}
+
+bool Player::ddaActive() const {
+  for (int c = 0; c < kChannels; ++c) if (ch_[c].ddaOn && ch_[c].active) return true;
+  return false;
+}
+
+void Player::ddaTick(RegisterSink& out) {
+  for (int c = 0; c < kChannels; ++c) {
+    Channel& ch = ch_[c];
+    if (!ch.ddaOn || !ch.active || ch.ddaSample < 0) continue;
+    const Sample& smp = song_.samples[ch.ddaSample];
+    uint32_t idx = ch.ddaPos >> 8;
+    if (idx >= smp.data.size()) {
+      if (smp.loop >= 0 && smp.loop < (int)smp.data.size()) {
+        ch.ddaPos = (uint32_t)smp.loop << 8;
+        idx = (uint32_t)smp.loop;
+      } else {
+        ch.ddaOn = false; // silenced at the next frame
+        continue;
+      }
+    }
+    selectChannel(out, c);
+    out.write(REG_WAVE_DATA, (uint8_t)(smp.data[idx] & 0x1F));
+    ch.ddaPos += ch.ddaStepV;
   }
 }
 

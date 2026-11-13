@@ -80,6 +80,15 @@ std::string cellText(const Cell& c) {
   return s;
 }
 
+// Samples: one character per 5-bit value, 0-9 then A-V (base 32).
+const char* kB32 = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
+int b32Value(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'V') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'v') return c - 'a' + 10;
+  return -1;
+}
+
 bool isEffectCmd(char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z'); }
 
 bool parseCell(const std::vector<std::string>& t, size_t at, Cell* c, std::string* err) {
@@ -127,9 +136,20 @@ std::string saveSongText(const Song& song) {
   }
   o << "\n";
 
+  for (size_t n = 0; n < song.samples.size(); ++n) {
+    const Sample& sm = song.samples[n];
+    o << "sample " << hex2((int)n) << " " << quote(sm.name);
+    if (sm.loop >= 0) o << " loop " << sm.loop;
+    std::string d(sm.data.size(), '0');
+    for (size_t i = 0; i < sm.data.size(); ++i) d[i] = kB32[sm.data[i] & 31];
+    o << " : " << d << "\n";
+  }
+  if (!song.samples.empty()) o << "\n";
+
   for (size_t n = 0; n < song.instruments.size(); ++n) {
     const Instrument& in = song.instruments[n];
     o << "instrument " << hex2((int)n) << " " << quote(in.name) << "\n";
+    if (in.sample >= 0) o << "  sample " << hex2(in.sample) << "\n";
     o << "  wave " << hex2(in.wave) << "\n";
     o << "  volume " << hex2(in.volume) << "\n";
     if (in.resetPhase) o << "  resetphase\n";
@@ -228,6 +248,7 @@ bool loadSongText(const std::string& text, Song* out, std::string* error) {
       if (t[0] == "wave" && t.size() == 2 && parseHex2(t[1], 0, &v)) { inst->wave = (uint8_t)v; continue; }
       if (t[0] == "volume" && t.size() == 2 && parseHex2(t[1], 0, &v) && v <= kVolumeMax) { inst->volume = (uint8_t)v; continue; }
       if (t[0] == "resetphase") { inst->resetPhase = true; continue; }
+      if (t[0] == "sample" && t.size() == 2 && parseHex2(t[1], 0, &v) && v < kMaxSamples) { inst->sample = v; continue; }
       if (t[0] == "macro" && t.size() >= 3) {
         int kind = -1;
         for (int k = 0; k < MACRO_COUNT; ++k) if (t[1] == kMacroNames[k]) kind = k;
@@ -270,6 +291,30 @@ bool loadSongText(const std::string& text, Song* out, std::string* error) {
       }
       if ((int)s.waves.size() <= v) s.waves.resize((size_t)v + 1);
       s.waves[v] = w;
+      continue;
+    }
+    if (t[0] == "sample" && t.size() >= 3 && parseHex2(t[1], 0, &v) && v < kMaxSamples) {
+      Sample sm;
+      size_t i = 2;
+      if (t[i] != ":" && t[i] != "loop") sm.name = t[i++];
+      if (i + 1 < t.size() && t[i] == "loop") {
+        if (!toInt(t[i + 1], &sm.loop)) FAIL("bad sample loop");
+        i += 2;
+      }
+      if (i >= t.size() || t[i] != ":") FAIL("sample data must follow ':'");
+      if (i + 1 < t.size()) {
+        const std::string& d = t[i + 1];
+        if ((int)d.size() > kMaxSampleLength) FAIL("sample longer than " << kMaxSampleLength);
+        sm.data.resize(d.size());
+        for (size_t k = 0; k < d.size(); ++k) {
+          int b = b32Value(d[k]);
+          if (b < 0) FAIL("bad sample data character '" << d[k] << "' (0-9, A-V)");
+          sm.data[k] = (uint8_t)b;
+        }
+      }
+      if (sm.loop >= (int)sm.data.size()) sm.loop = -1;
+      if ((int)s.samples.size() <= v) s.samples.resize((size_t)v + 1);
+      s.samples[v] = sm;
       continue;
     }
     if (t[0] == "instrument" && t.size() >= 2 && parseHex2(t[1], 0, &v) && v < kMaxInstruments) {

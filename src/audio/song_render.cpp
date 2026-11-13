@@ -7,7 +7,7 @@
 namespace pce {
 
 SongRenderer::SongRenderer(const Song& song, PsgRevision rev, int sampleRate)
-  : player_(song), psg_(rev, sampleRate) {}
+  : player_(song), psg_(rev, sampleRate), timerNext_(kDdaTimerClocks) {}
 
 void SongRenderer::write(uint8_t reg, uint8_t value) { psg_.write(reg, value); }
 
@@ -15,7 +15,20 @@ bool SongRenderer::renderTick(std::vector<int16_t>& out) {
   // All register writes of a tick happen at the start of the frame (the driver
   // runs in the VBlank interrupt), then the chip plays for one frame.
   bool more = player_.tick(*this);
-  psg_.advance(kFrameClocks);
+  // The timer runs freely across frames; DDA samples are written on its interrupts.
+  uint32_t t = 0;
+  if (player_.ddaActive()) {
+    while (timerNext_ < kFrameClocks) {
+      psg_.advance(timerNext_ - t);
+      t = timerNext_;
+      player_.ddaTick(*this);
+      timerNext_ += kDdaTimerClocks;
+    }
+  } else {
+    while (timerNext_ < kFrameClocks) timerNext_ += kDdaTimerClocks;
+  }
+  psg_.advance(kFrameClocks - t);
+  timerNext_ -= kFrameClocks;
   size_t n = psg_.available();
   size_t at = out.size();
   out.resize(at + n * 2);

@@ -24,6 +24,11 @@ const int kWaveMax = 31;        // 5-bit samples
 const int kVolumeMax = 31;      // 5-bit channel volume
 const int kMaxMacroLength = 64;
 const int kEffectColumns = 2;
+const int kMaxSamples = 64;
+const int kMaxSampleLength = 65535;   // 5-bit samples; ROM space is the real limit
+// DDA samples are played by the driver from the HuC6280 timer: 7.16 MHz / 1024.
+const double kDdaRateHz = 315000000.0 / 88.0 * 2.0 / 1024.0; // ~6991 Hz
+const uint32_t kDdaTimerClocks = 1024;  // PSG clocks per timer interrupt
 
 // Notes: 0 = C-1 ... 95 = B-8 (A-4 = 45 = 440 Hz).
 // C-1 (32.7 Hz) is close to the lowest pitch the 12-bit period can reach (27.3 Hz).
@@ -86,17 +91,28 @@ enum MacroKind {
 
 struct Instrument {
   std::string name;
+  int sample;       // DDA sample index, -1 = wavetable instrument
   uint8_t wave;     // initial wave bank index
   uint8_t volume;   // 0..31
   bool resetPhase;  // restart wave from sample 0 on every note (channel off/on)
   Macro macros[MACRO_COUNT];
-  Instrument() : wave(0), volume(kVolumeMax), resetPhase(false) {}
+  Instrument() : sample(-1), wave(0), volume(kVolumeMax), resetPhase(false) {}
 };
 
 struct Wave {
   uint8_t data[kWaveLength];
   Wave();
   bool operator==(const Wave& o) const;
+};
+
+// 5-bit PCM played through a channel's DDA mode at the timer rate.
+// Pitch follows the note (C-4 = original speed) by stepping through the
+// data in 8.8 fixed point - the same integer math a 6280 driver uses.
+struct Sample {
+  std::string name;
+  std::vector<uint8_t> data; // 0..31
+  int loop;                  // loop start, -1 = one shot
+  Sample() : loop(-1) {}
 };
 
 struct Song {
@@ -107,6 +123,7 @@ struct Song {
   std::vector<Pattern> patterns;
   std::vector<Instrument> instruments;
   std::vector<Wave> waves;
+  std::vector<Sample> samples;
   Song();
   Pattern& pattern(int i);           // creates missing patterns
 };
@@ -115,6 +132,7 @@ struct Song {
 std::string noteName(uint8_t note); // "C-4", "C#4", "OFF", "---"
 bool parseNoteName(const std::string& s, uint8_t* note);
 uint16_t notePeriod(int note);      // PSG period for a note (clamped to 1..4095)
+uint16_t ddaStep(int note);         // DDA sample step, 8.8 fixed point (C-4 = 256)
 
 } // namespace pce
 

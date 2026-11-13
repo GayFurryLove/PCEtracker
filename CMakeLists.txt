@@ -53,7 +53,7 @@ add_library(pce_project STATIC src/project/text_format.cpp)
 target_link_libraries(pce_project PUBLIC pce_tracker)
 
 # --- module 5: audio renderer (player -> PSG -> PCM/WAV) -------------------
-add_library(pce_render STATIC src/audio/song_render.cpp)
+add_library(pce_render STATIC src/audio/song_render.cpp src/audio/wav_reader.cpp)
 target_link_libraries(pce_render PUBLIC pce_tracker pce_psg pce_wav)
 
 if(PCE_BUILD_TOOLS)
@@ -89,6 +89,7 @@ if(PCE_BUILD_APP)
     add_executable(pcetracker
       src/main.cpp
       src/ui/app.cpp
+      src/ui/app_instrument.cpp
       src/ui/config.cpp
       src/ui/screen.cpp)
     target_include_directories(pcetracker PRIVATE src third_party/font8x8 ${PCE_SDL2_INCLUDES})

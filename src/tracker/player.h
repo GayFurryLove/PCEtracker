@@ -45,6 +45,11 @@ public:
   void jamRelease(int ch);       // key-off for that channel's preview note
   bool jamming() const { return jam_; }
 
+  // DDA: called at every timer interrupt (~6991 Hz, kDdaTimerClocks apart)
+  // between ticks. Writes the next 5-bit sample of each playing DDA channel.
+  void ddaTick(RegisterSink& out);
+  bool ddaActive() const;
+
   void setMute(int ch, bool muted);
   bool muted(int ch) const { return ch_[ch].muted; }
   void solo(int ch); // mute every other channel; solo(-1) unmutes all
@@ -88,6 +93,10 @@ private:
     int wave;            // wave bank index wanted
     int noise;           // 0 off, 1..32
     bool phaseReset;     // restart wave RAM pointer before next enable
+    int ddaSample;       // sample index while a DDA instrument plays, else -1
+    bool ddaOn;          // sample still running
+    uint32_t ddaPos;     // position in 8.8 fixed point
+    uint16_t ddaStepV;   // 8.8 step per timer interrupt
     // computed output
     uint8_t outNote, outVol;
     int outPeriod;

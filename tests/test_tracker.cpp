@@ -2,9 +2,11 @@
 // Copyright (C) 2026 PCEtracker contributors. GPL-2.0-or-later, see LICENSE.
 
 #include "audio/song_render.h"
+#include "audio/wav_reader.h"
 #include "project/text_format.h"
 #include "tracker/player.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -305,6 +307,87 @@ static void testRender(const char* demoPath) {
   CHECK(pcm == pcm2);
 }
 
+static void testDdaPlayback() {
+  Song s;
+  Sample smp;
+  for (int i = 0; i < 300; ++i) smp.data.push_back((uint8_t)(i & 31));
+  s.samples.push_back(smp);
+  s.instruments[0].sample = 0;
+  s.pattern(0).at(0, 2) = note(36, 0, 0x1F); // C-4 = original speed
+  SongRenderer r(s, PSG_REV_HUC6280A, 44100);
+  Player& p = r.player();
+  p.playSong();
+  struct Count : RegisterSink {
+    int data, ctrl, sel;
+    Count() : data(0), ctrl(-1), sel(-1) {}
+    void write(uint8_t reg, uint8_t v) {
+      if (reg == REG_SELECT) sel = v;
+      if (reg == REG_WAVE_DATA) ++data;
+      if (reg == REG_CONTROL && sel == 2) ctrl = v;
+    }
+  } cnt;
+  p.tick(cnt);
+  CHECK(cnt.ctrl == (0xC0 | 0x1F)); // DDA bit + volume
+  CHECK(cnt.data == 0);             // no wave upload for DDA instruments
+  // ~116.4 timer interrupts per frame at step 1.0 -> 300 samples last ~2.6 frames.
+  int writes = 0;
+  for (int f = 0; f < 4; ++f) {
+    for (int t = 0; t < 116; ++t) { Count c2; p.ddaTick(c2); writes += c2.data; }
+  }
+  CHECK(writes == 300);
+  CHECK(!p.ddaActive());
+  Count c3;
+  p.tick(c3);
+  CHECK(p.view(2).volume == 0); // sample ended -> silent
+
+  // An octave up plays twice as fast.
+  Song s2 = s;
+  s2.pattern(0).at(0, 2) = note(48, 0, 0x1F);
+  Player p2(s2);
+  p2.playSong();
+  Count c4;
+  p2.tick(c4);
+  int w2 = 0;
+  for (int t = 0; t < 400; ++t) { Count c5; p2.ddaTick(c5); w2 += c5.data; }
+  CHECK(w2 == 150);
+
+  // Rendering with DDA produces sound.
+  SongRenderer r2(s, PSG_REV_HUC6280A, 44100);
+  r2.player().playSong();
+  std::vector<int16_t> pcm;
+  for (int t = 0; t < 4; ++t) r2.renderTick(pcm);
+  double e = 0;
+  for (size_t i = 0; i < pcm.size(); ++i) e += (double)pcm[i] * pcm[i];
+  CHECK(e > 0);
+}
+
+static void testSampleFormatAndImport() {
+  Song s;
+  Sample smp;
+  smp.name = "kick";
+  smp.loop = 2;
+  const uint8_t vals[] = { 0, 9, 10, 31, 16 };
+  smp.data.assign(vals, vals + 5);
+  s.samples.push_back(smp);
+  s.instruments[0].sample = 0;
+  std::string text = saveSongText(s), err;
+  CHECK(text.find("sample 00 \"kick\" loop 2 : 09AVG") != std::string::npos);
+  Song s2;
+  CHECK(loadSongText(text, &s2, &err));
+  CHECK(s2.samples.size() == 1 && s2.samples[0].data == smp.data && s2.samples[0].loop == 2);
+  CHECK(s2.instruments[0].sample == 0);
+
+  // 1 s of 440 Hz at 44.1 kHz -> ~6991 values covering the full 5-bit range.
+  std::vector<float> sine(44100);
+  for (size_t i = 0; i < sine.size(); ++i) sine[i] = (float)sin(2 * 3.14159265 * 440 * i / 44100.0) * 0.3f;
+  Sample conv;
+  convertToDda(&sine[0], sine.size(), 44100, &conv);
+  CHECK(conv.data.size() >= 6985 && conv.data.size() <= 6995);
+  int mn = 31, mx = 0;
+  for (size_t i = 0; i < conv.data.size(); ++i) { if (conv.data[i] < mn) mn = conv.data[i]; if (conv.data[i] > mx) mx = conv.data[i]; }
+  CHECK(mn <= 1 && mx >= 30); // normalized
+}
+
 int main(int argc, char** argv) {
   const char* demo = argc > 1 ? argv[1] : "songs/demo.pcet";
   struct { const char* name; void (*fn)(); } tests[] = {
@@ -319,6 +402,8 @@ int main(int argc, char** argv) {
     { "mute and solo", testMuteSolo },
     { "order flow", testOrderFlow },
     { "wave effect re-uploads", testWaveEffectReuploads },
+    { "dda playback", testDdaPlayback },
+    { "samples: format and wav conversion", testSampleFormatAndImport },
   };
   for (size_t i = 0; i < sizeof tests / sizeof tests[0]; ++i) {
     printf("%s\n", tests[i].name);

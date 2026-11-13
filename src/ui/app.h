@@ -24,6 +24,7 @@ public:
 
 private:
   bool initVideo();
+  void updateScaling();
   bool initAudio();
   static void audioCallback(void* user, Uint8* stream, int len);
   void fillAudio(int16_t* out, int frames);
@@ -52,6 +53,16 @@ private:
   void drawStatus();
   void drawHelp();
 
+  // Instrument screen (app_instrument.cpp)
+  bool handleInstrumentKey(const SDL_KeyboardEvent& k);
+  void handleInstrumentMouse(const SDL_Event& e);
+  void drawInstrumentView(int top, int bottom);
+  void jamInstrument(SDL_Scancode sc, bool repeat);
+  void importSample(const char* path);
+  void startTextEdit(int what);
+  void handleTextInput(const char* text);
+  bool handleTextKey(const SDL_KeyboardEvent& k);
+
   Config cfg_;
   Song song_;
   Editor editor_;
@@ -77,6 +88,19 @@ private:
   int playOrder_, playRow_;
   Player::ChannelView views_[kChannels];
   bool muted_[kChannels];
+
+  enum View { VIEW_PATTERN = 0, VIEW_INSTRUMENT };
+  enum Focus { FOCUS_PARAMS = 0, FOCUS_WAVE, FOCUS_MACRO, FOCUS_COUNT };
+  enum TextEdit { TEXT_NONE = 0, TEXT_INST_NAME, TEXT_SONG_TITLE };
+  int view_;
+  int focus_;
+  int paramRow_;      // 0 = name, 1.. = InstField + 1
+  int waveCursor_;
+  int macroKind_;
+  int macroCursor_;
+  int drag_;          // 0 none, 1 wave, 2 macro (mouse drawing)
+  int textEdit_;
+  std::string textBuf_;
 };
 
 } // namespace pce

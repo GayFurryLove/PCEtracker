@@ -64,7 +64,9 @@ void Screen::fill(int col, int row, int w, int h, Color c) {
 }
 
 void Screen::frame(int col, int row, int w, int h, Color c) {
-  SDL_Rect rc = { col * kCell - 2, row * kCell - 2, w * kCell + 4, h * kCell + 4 };
+  // 1 px outside the cells: stays clear of text in the row above/below
+  // (the 8x8 font leaves its last pixel row empty).
+  SDL_Rect rc = { col * kCell - 1, row * kCell - 1, w * kCell + 2, h * kCell + 2 };
   setColor(c);
   SDL_RenderDrawRect(r_, &rc);
 }

@@ -154,6 +154,67 @@ static void testCursorWrap() {
   CHECK(e.channel() == 0 && e.column() == COL_NOTE);
 }
 
+static void testInstrumentEditing() {
+  Song s;
+  Editor e(s);
+  e.newInstrument();
+  CHECK(s.instruments.size() == 2 && e.instrument == 1);
+  e.setInstrumentName("Bass");
+  CHECK(s.instruments[1].name == "Bass");
+  e.changeInstrumentField(IF_VOLUME, -40);
+  CHECK(s.instruments[1].volume == 0);
+  e.changeInstrumentField(IF_VOLUME, 100);
+  CHECK(s.instruments[1].volume == 31); // 5-bit hardware volume
+  e.changeInstrumentField(IF_TYPE, 1);
+  CHECK(s.instruments[1].sample == -1); // no samples -> stays wavetable
+
+  e.newWave();
+  CHECK(s.waves.size() == 2 && s.instruments[1].wave == 1);
+  e.applyWavePreset(WP_SAW);
+  CHECK(s.waves[1].data[0] == 0 && s.waves[1].data[31] == 31);
+  CHECK(s.waves[0].data[0] == 31); // other waves untouched
+  e.applyWavePreset(WP_INVERT);
+  CHECK(s.waves[1].data[0] == 31);
+  e.setWaveSample(3, 99);
+  CHECK(s.waves[1].data[3] == 31); // clamped to 5 bits
+
+  // Mouse strokes merge into one undo step.
+  e.setWaveSample(0, 1, 1);
+  e.setWaveSample(1, 1, 1);
+  e.setWaveSample(2, 1, 1);
+  e.endGesture();
+  e.undo();
+  CHECK(s.waves[1].data[0] == 31 && s.waves[1].data[2] != 1);
+
+  e.macroSet(MACRO_VOLUME, 3, 10);
+  CHECK(s.instruments[1].macros[MACRO_VOLUME].values.size() == 4);
+  CHECK(s.instruments[1].macros[MACRO_VOLUME].values[0] == 31); // filled with default
+  e.macroSet(MACRO_ARP, 0, 100);
+  CHECK(s.instruments[1].macros[MACRO_ARP].values[0] == 48); // range clamp
+  e.macroToggleLoop(MACRO_VOLUME, 1);
+  e.macroToggleRelease(MACRO_VOLUME, 2);
+  e.macroInsert(MACRO_VOLUME, 0);
+  CHECK(s.instruments[1].macros[MACRO_VOLUME].loop == 2 && s.instruments[1].macros[MACRO_VOLUME].release == 3);
+  e.macroDelete(MACRO_VOLUME, 2);
+  CHECK(s.instruments[1].macros[MACRO_VOLUME].loop == -1 && s.instruments[1].macros[MACRO_VOLUME].release == 2);
+
+  e.cloneInstrument();
+  CHECK(s.instruments.size() == 3 && s.instruments[2].name == "Bass copy");
+  e.undo();
+  CHECK(s.instruments.size() == 2);
+  e.redo();
+  CHECK(s.instruments.size() == 3);
+
+  Sample smp;
+  smp.data.assign(10, 16);
+  int idx = e.addSample(smp);
+  CHECK(idx == 0 && s.instruments[e.instrument].sample == 0);
+  e.changeInstrumentField(IF_TYPE, 1);
+  CHECK(s.instruments[e.instrument].sample == -1);
+  e.changeInstrumentField(IF_TYPE, 1);
+  CHECK(s.instruments[e.instrument].sample == 0);
+}
+
 int main() {
   struct { const char* name; void (*fn)(); } tests[] = {
     { "note entry", testNoteEntry },
@@ -162,6 +223,7 @@ int main() {
     { "undo/redo", testUndoRedo },
     { "orders", testOrders },
     { "cursor wrap", testCursorWrap },
+    { "instrument editing", testInstrumentEditing },
   };
   for (size_t i = 0; i < sizeof tests / sizeof tests[0]; ++i) {
     printf("%s\n", tests[i].name);

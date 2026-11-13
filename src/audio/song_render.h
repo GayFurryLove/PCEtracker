@@ -33,6 +33,7 @@ private:
   virtual void write(uint8_t reg, uint8_t value);
   Player player_;
   Psg psg_;
+  uint32_t timerNext_; // PSG clocks from the frame start to the next timer interrupt
 };
 
 struct RenderOptions {

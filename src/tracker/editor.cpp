@@ -3,6 +3,9 @@
 
 #include "tracker/editor.h"
 
+#include <math.h>
+#include <stdio.h>
+
 namespace pce {
 
 namespace {
@@ -17,7 +20,7 @@ int setNibble(int value, bool high, int digit) {
 Editor::Editor(Song& song)
   : octave(3), instrument(0), editStep(1), editMode(false),
     song_(song), order_(0), row_(0), ch_(0), col_(COL_NOTE),
-    selActive_(false), selRow_(0), selCh_(0), clipW_(0), clipH_(0), dirty_(false) {
+    selActive_(false), selRow_(0), selCh_(0), clipW_(0), clipH_(0), dirty_(false), gesture_(0) {
   if (song_.orders.empty()) song_.orders.push_back(0);
   song_.pattern(song_.orders[0]);
 }
@@ -76,10 +79,22 @@ Editor::Snapshot Editor::capture(bool wholeSong) const {
   }
   s.speed = song_.speed;
   s.order = order_; s.row = row_; s.ch = ch_; s.col = col_;
+  s.instruments = false;
+  s.instrument = instrument;
+  s.title = song_.title;
   return s;
 }
 
 void Editor::restore(const Snapshot& s) {
+  if (s.instruments) {
+    song_.instruments = s.insts;
+    song_.waves = s.waves;
+    song_.title = s.title;
+    instrument = s.instrument;
+    if (instrument >= (int)song_.instruments.size()) instrument = (int)song_.instruments.size() - 1;
+    dirty_ = true;
+    return;
+  }
   if (s.wholeSong) {
     song_.orders = s.orders;
     song_.patterns = s.patterns;
@@ -94,16 +109,40 @@ void Editor::restore(const Snapshot& s) {
 }
 
 void Editor::pushUndo(bool wholeSong) {
+  gesture_ = 0;
   undo_.push_back(capture(wholeSong));
   if (undo_.size() > kUndoLimit) undo_.erase(undo_.begin());
   redo_.clear();
   dirty_ = true;
 }
 
+void Editor::pushInstrumentUndo(int gesture) {
+  dirty_ = true;
+  if (gesture != 0 && gesture == gesture_) return; // same mouse stroke: one undo step
+  gesture_ = gesture;
+  Snapshot s = capture(false);
+  s.instruments = true;
+  s.insts = song_.instruments;
+  s.waves = song_.waves;
+  undo_.push_back(s);
+  if (undo_.size() > kUndoLimit) undo_.erase(undo_.begin());
+  redo_.clear();
+}
+
 bool Editor::undo() {
   if (undo_.empty()) return false;
   Snapshot s = undo_.back();
   undo_.pop_back();
+  gesture_ = 0;
+  if (s.instruments) {
+    Snapshot cur = capture(false);
+    cur.instruments = true;
+    cur.insts = song_.instruments;
+    cur.waves = song_.waves;
+    redo_.push_back(cur);
+    restore(s);
+    return true;
+  }
   // Save the state we are leaving with the same scope, then go back.
   int saveOrder = order_;
   order_ = clampi(s.order, 0, (int)song_.orders.size() - 1);
@@ -120,6 +159,16 @@ bool Editor::redo() {
   if (redo_.empty()) return false;
   Snapshot s = redo_.back();
   redo_.pop_back();
+  gesture_ = 0;
+  if (s.instruments) {
+    Snapshot cur = capture(false);
+    cur.instruments = true;
+    cur.insts = song_.instruments;
+    cur.waves = song_.waves;
+    undo_.push_back(cur);
+    restore(s);
+    return true;
+  }
   Snapshot cur = capture(s.wholeSong);
   cur.patternIdx = s.patternIdx;
   if (!s.wholeSong) cur.pattern = song_.pattern(s.patternIdx);
@@ -363,6 +412,186 @@ void Editor::changeSpeed(int d) {
   if (s == song_.speed) return;
   pushUndo();
   song_.speed = s;
+}
+
+// --- instruments --------------------------------------------------------------
+
+Instrument& Editor::currentInstrument() {
+  if (song_.instruments.empty()) song_.instruments.push_back(Instrument());
+  instrument = clampi(instrument, 0, (int)song_.instruments.size() - 1);
+  return song_.instruments[instrument];
+}
+
+void Editor::setInstrumentName(const std::string& name) {
+  pushInstrumentUndo();
+  currentInstrument().name = name.substr(0, 32);
+}
+
+void Editor::setSongTitle(const std::string& t) {
+  pushInstrumentUndo();
+  song_.title = t.substr(0, 64);
+}
+
+void Editor::changeInstrumentField(int field, int d) {
+  pushInstrumentUndo();
+  Instrument& in = currentInstrument();
+  switch (field) {
+    case IF_TYPE:
+      // Wave <-> DDA. Switching to DDA picks the first sample if there is one.
+      if (in.sample >= 0) in.sample = -1;
+      else if (!song_.samples.empty()) in.sample = 0;
+      break;
+    case IF_WAVE:
+      in.wave = (uint8_t)clampi(in.wave + d, 0, (int)song_.waves.size() - 1);
+      break;
+    case IF_SAMPLE:
+      if (!song_.samples.empty()) in.sample = clampi(in.sample + d, 0, (int)song_.samples.size() - 1);
+      break;
+    case IF_VOLUME:
+      in.volume = (uint8_t)clampi(in.volume + d, 0, kVolumeMax);
+      break;
+    case IF_PHASE:
+      in.resetPhase = !in.resetPhase;
+      break;
+    default: break;
+  }
+}
+
+void Editor::newInstrument() {
+  if ((int)song_.instruments.size() >= kMaxInstruments) return;
+  pushInstrumentUndo();
+  Instrument in;
+  char b[16];
+  snprintf(b, sizeof b, "inst %02X", (int)song_.instruments.size());
+  in.name = b;
+  song_.instruments.push_back(in);
+  instrument = (int)song_.instruments.size() - 1;
+}
+
+void Editor::cloneInstrument() {
+  if ((int)song_.instruments.size() >= kMaxInstruments) return;
+  pushInstrumentUndo();
+  Instrument in = currentInstrument();
+  in.name = (in.name + " copy").substr(0, 32);
+  song_.instruments.push_back(in);
+  instrument = (int)song_.instruments.size() - 1;
+}
+
+int Editor::currentWaveIndex() const {
+  if (song_.instruments.empty() || song_.waves.empty()) return 0;
+  int i = clampi(instrument, 0, (int)song_.instruments.size() - 1);
+  return clampi(song_.instruments[i].wave, 0, (int)song_.waves.size() - 1);
+}
+
+void Editor::setWaveSample(int i, int v, int gesture) {
+  if (i < 0 || i >= kWaveLength || song_.waves.empty()) return;
+  pushInstrumentUndo(gesture);
+  song_.waves[currentWaveIndex()].data[i] = (uint8_t)clampi(v, 0, kWaveMax);
+}
+
+void Editor::applyWavePreset(int preset) {
+  if (song_.waves.empty()) return;
+  pushInstrumentUndo();
+  uint8_t* w = song_.waves[currentWaveIndex()].data;
+  uint8_t old[kWaveLength];
+  for (int i = 0; i < kWaveLength; ++i) old[i] = w[i];
+  uint32_t lfsr = 0x1234567u;
+  for (int i = 0; i < kWaveLength; ++i) {
+    int v = w[i];
+    switch (preset) {
+      case WP_SINE: v = (int)floor(15.5 + 15.5 * sin(2.0 * 3.14159265358979 * i / kWaveLength) + 0.5); break;
+      case WP_SQUARE: v = i < kWaveLength / 2 ? kWaveMax : 0; break;
+      case WP_SAW: v = i; break;
+      case WP_TRIANGLE: v = i < 16 ? i * 2 : (31 - i) * 2; break;
+      case WP_NOISE: lfsr = lfsr * 1103515245u + 12345u; v = (int)((lfsr >> 16) & 31); break;
+      case WP_CLEAR: v = 16; break;
+      case WP_INVERT: v = kWaveMax - old[i]; break;
+      case WP_SHIFT: v = old[(i + 1) % kWaveLength]; break;       // phase shift by one step
+      case WP_HALF: v = 16 + (old[i] - 16) / 2; break;            // half amplitude around center
+      default: break;
+    }
+    w[i] = (uint8_t)clampi(v, 0, kWaveMax);
+  }
+}
+
+void Editor::newWave() {
+  if ((int)song_.waves.size() >= kMaxWaves) return;
+  pushInstrumentUndo();
+  Wave w = song_.waves.empty() ? Wave() : song_.waves[currentWaveIndex()];
+  song_.waves.push_back(w);
+  currentInstrument().wave = (uint8_t)(song_.waves.size() - 1);
+}
+
+void Editor::macroRange(int kind, int* lo, int* hi) {
+  switch (kind) {
+    case MACRO_VOLUME: *lo = 0; *hi = kVolumeMax; break;
+    case MACRO_ARP: *lo = -48; *hi = 48; break;
+    case MACRO_PITCH: *lo = -64; *hi = 63; break;
+    case MACRO_WAVE: *lo = 0; *hi = kMaxWaves - 1; break;
+    case MACRO_NOISE: *lo = 0; *hi = 32; break;
+    default: *lo = -128; *hi = 127; break; // pan: raw byte (shown as $LR)
+  }
+}
+
+void Editor::macroSet(int kind, int i, int v, int gesture) {
+  if (kind < 0 || kind >= MACRO_COUNT || i < 0 || i >= kMaxMacroLength) return;
+  pushInstrumentUndo(gesture);
+  Macro& m = currentInstrument().macros[kind];
+  int lo, hi;
+  macroRange(kind, &lo, &hi);
+  int8_t fill = m.values.empty() ? (int8_t)clampi(kind == MACRO_VOLUME ? kVolumeMax : 0, lo, hi) : m.values.back();
+  while ((int)m.values.size() <= i) m.values.push_back(fill);
+  m.values[i] = (int8_t)clampi(v, lo, hi);
+}
+
+void Editor::macroInsert(int kind, int i) {
+  Macro& m = currentInstrument().macros[kind];
+  if ((int)m.values.size() >= kMaxMacroLength) return;
+  pushInstrumentUndo();
+  int8_t v = m.values.empty() ? (int8_t)(kind == MACRO_VOLUME ? kVolumeMax : 0)
+                              : m.values[clampi(i, 0, (int)m.values.size() - 1)];
+  i = clampi(i, 0, (int)m.values.size());
+  m.values.insert(m.values.begin() + i, v);
+  if (m.loop >= i) ++m.loop;
+  if (m.release >= i) ++m.release;
+}
+
+void Editor::macroDelete(int kind, int i) {
+  Macro& m = currentInstrument().macros[kind];
+  if (i < 0 || i >= (int)m.values.size()) return;
+  pushInstrumentUndo();
+  m.values.erase(m.values.begin() + i);
+  if (m.loop > i) --m.loop; else if (m.loop == i) m.loop = -1;
+  if (m.release > i) --m.release; else if (m.release == i) m.release = -1;
+  if (m.loop >= (int)m.values.size()) m.loop = -1;
+  if (m.release >= (int)m.values.size()) m.release = -1;
+}
+
+void Editor::macroToggleLoop(int kind, int i) {
+  Macro& m = currentInstrument().macros[kind];
+  if (i < 0 || i >= (int)m.values.size()) return;
+  pushInstrumentUndo();
+  m.loop = m.loop == i ? -1 : i;
+}
+
+void Editor::macroToggleRelease(int kind, int i) {
+  Macro& m = currentInstrument().macros[kind];
+  if (i < 0 || i >= (int)m.values.size()) return;
+  pushInstrumentUndo();
+  m.release = m.release == i ? -1 : i;
+}
+
+void Editor::macroClear(int kind) {
+  pushInstrumentUndo();
+  currentInstrument().macros[kind] = Macro();
+}
+
+int Editor::addSample(const Sample& smp) {
+  if ((int)song_.samples.size() >= kMaxSamples) return -1;
+  song_.samples.push_back(smp); // sample data itself is not part of undo (memory)
+  pushInstrumentUndo();
+  currentInstrument().sample = (int)song_.samples.size() - 1;
+  return currentInstrument().sample;
 }
 
 } // namespace pce

@@ -11,7 +11,7 @@
 namespace pce {
 
 Config::Config()
-  : scale(1), fullscreen(false), softwareRender(false), vsync(true),
+  : scale(1), fullscreen(2), softwareRender(false), vsync(true),
     audioRate(44100), audioBuffer(1024), revisionA(true) {}
 
 std::string Config::defaultPath() {
@@ -25,7 +25,9 @@ static const char* kDefaultText =
   "# PCEtracker configuration\n"
   "# Window scale (integer): 1 = 1024x600, 2 = 2048x1200 ...\n"
   "scale=1\n"
-  "fullscreen=0\n"
+  "# fullscreen: 0 = window, 1 = fullscreen, auto = fullscreen when the window does not fit\n"
+  "# (e.g. a 1024x600 screen with a title bar and a taskbar)\n"
+  "fullscreen=auto\n"
   "# 1 = SDL software renderer (no GPU acceleration needed)\n"
   "software_render=0\n"
   "vsync=1\n"
@@ -51,7 +53,7 @@ void Config::load(const std::string& path) {
     const char* val = eq + 1;
     int v = atoi(val);
     if (!strcmp(key, "scale")) scale = v < 1 ? 1 : (v > 8 ? 8 : v);
-    else if (!strcmp(key, "fullscreen")) fullscreen = v != 0;
+    else if (!strcmp(key, "fullscreen")) fullscreen = !strncmp(val, "auto", 4) ? 2 : (v != 0);
     else if (!strcmp(key, "software_render")) softwareRender = v != 0;
     else if (!strcmp(key, "vsync")) vsync = v != 0;
     else if (!strcmp(key, "audio_rate")) audioRate = (v >= 8000 && v <= 192000) ? v : 44100;

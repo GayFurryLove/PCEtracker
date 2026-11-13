@@ -30,6 +30,19 @@ struct Guard {
   ~Guard() { if (d) SDL_UnlockAudioDevice(d); }
 };
 
+// First visible item of a list: starts at the top, scrolls only when the
+// cursor would leave the middle, never shows empty space after the end.
+int listTop(int cursor, int count, int visible) {
+  if (count <= visible) return 0;
+  int t = cursor - visible / 2;
+  if (t < 0) t = 0;
+  if (t > count - visible) t = count - visible;
+  return t;
+}
+
+const int kPatVisible = kPatBottom - kPatTop + 1;
+const int kListVisible = kPanelRows - 1;
+
 std::string hex2(int v) {
   char b[4];
   snprintf(b, sizeof b, "%02X", v & 0xFF);
@@ -478,8 +491,7 @@ void App::handleMouse(const SDL_Event& e) {
     int col = -1;
     for (int c = 0; c < COL_COUNT; ++c) if (off >= kColOff[c] && off < kColOff[c] + kColW[c]) col = c;
     if (col < 0) col = COL_NOTE;
-    int center = (kPatTop + kPatBottom) / 2;
-    int row = editor_.row() + (cy - center);
+    int row = listTop(editor_.row(), editor_.pattern().rows, kPatVisible) + (cy - kPatTop);
     if (row >= 0 && row < editor_.pattern().rows) {
       editor_.clearSelection();
       editor_.setCursor(row, ch, col);
@@ -488,14 +500,13 @@ void App::handleMouse(const SDL_Event& e) {
   }
   // Order list
   if (cx >= 1 && cx < 13 && cy >= kTopRow + 1 && cy < kTopRow + kPanelRows) {
-    int center = kTopRow + 1 + (kPanelRows - 1) / 2;
-    editor_.setOrder(editor_.order() + (cy - center));
+    int o = listTop(editor_.order(), (int)song_.orders.size(), kListVisible) + (cy - kTopRow - 1);
+    if (o < (int)song_.orders.size()) editor_.setOrder(o);
     return;
   }
   // Instrument list
   if (cx >= 15 && cx < 48 && cy >= kTopRow + 1 && cy < kTopRow + kPanelRows) {
-    int center = kTopRow + 1 + (kPanelRows - 1) / 2;
-    int i = editor_.instrument + (cy - center);
+    int i = listTop(editor_.instrument, (int)song_.instruments.size(), kListVisible) + (cy - kTopRow - 1);
     if (i >= 0 && i < (int)song_.instruments.size()) editor_.instrument = i;
   }
 }
@@ -528,9 +539,9 @@ void App::drawHeader() {
 void App::drawOrders(int x, int y, int h) {
   screen_.textBg(x, y, " ORDER      ", C_BLACK, C_ORANGE);
   int n = (int)song_.orders.size();
-  int center = (h - 1) / 2;
+  int first = listTop(editor_.order(), n, h - 1);
   for (int i = 0; i < h - 1; ++i) {
-    int o = editor_.order() + i - center;
+    int o = first + i;
     if (o < 0 || o >= n) continue;
     char b[16];
     snprintf(b, sizeof b, " %02X  %02X ", o, song_.orders[o]);
@@ -544,9 +555,9 @@ void App::drawOrders(int x, int y, int h) {
 void App::drawInstruments(int x, int y, int h) {
   screen_.textBg(x, y, " INSTRUMENTS                      ", C_BLACK, C_ORANGE);
   int n = (int)song_.instruments.size();
-  int center = (h - 1) / 2;
+  int first = listTop(editor_.instrument, n, h - 1);
   for (int i = 0; i < h - 1; ++i) {
-    int k = editor_.instrument + i - center;
+    int k = first + i;
     if (k < 0 || k >= n) continue;
     char b[48];
     snprintf(b, sizeof b, " %02X %-29.29s", k, song_.instruments[k].name.c_str());
@@ -607,40 +618,64 @@ void App::drawPattern(int top, int bottom) {
   }
 
   const Pattern& p = editor_.pattern();
-  const int center = (top + bottom) / 2;
+  const int first = listTop(editor_.row(), p.rows, bottom - top + 1);
+  const int center = top + (editor_.row() - first); // screen row of the cursor
   int r0, c0, r1, c1;
   editor_.selectionRect(&r0, &c0, &r1, &c1);
   const bool sel = editor_.hasSelection();
   const bool showPlay = playing_ && playOrder_ == editor_.order() &&
                         (editor_.editMode || !followPlay_);
 
-  for (int y = top; y <= bottom; ++y) {
-    int r = editor_.row() + (y - center);
-    if (r < 0 || r >= p.rows) continue;
-    // Row background: cursor row, beat rows (every 4), play position.
-    if (y == center) screen_.fill(0, y, kCols, 1, editor_.editMode ? C_ORANGE_MID : C_ORANGE_DK);
-    else if (showPlay && r == playRow_) screen_.fill(0, y, kCols, 1, C_ORANGE_DK);
-    else if (r % 4 == 0) screen_.fill(0, y, kCols, 1, C_ORANGE_DK);
-    if (sel && r >= r0 && r <= r1)
-      screen_.fill(kChanX0 + c0 * kChanW, y, (c1 - c0) * kChanW + 17, 1, C_ORANGE_MID);
+  // Rows after the end of the pattern show the next order's pattern, dimmed.
+  const int nextOrder = (editor_.order() + 1) % (int)song_.orders.size();
+  const int nextIdx = song_.orders[nextOrder];
+  const Pattern* next = nextIdx < (int)song_.patterns.size() ? &song_.patterns[nextIdx] : 0;
 
-    screen_.text(0, y, hex2(r).c_str(), r % 4 == 0 ? C_WHITE : C_DIM);
+  for (int y = top; y <= bottom; ++y) {
+    int r = first + (y - top);
+    if (r < 0) continue;
+    const bool preview = r >= p.rows;
+    const Pattern* src = &p;
+    int sr = r;
+    if (preview) {
+      if (!next || r - p.rows >= next->rows) continue;
+      src = next;
+      sr = r - p.rows;
+      if (sr == 0) {
+        screen_.fillPx(0, y * kCell, kScreenW, 1, C_ORANGE);
+        char b[32];
+        snprintf(b, sizeof b, "NEXT %02X:%02X", nextOrder, nextIdx);
+        screen_.text(kCols - 11, y, b, C_ORANGE_MID);
+      }
+    } else {
+      // Row background: cursor row, beat rows (every 4), play position.
+      if (y == center) screen_.fill(0, y, kCols, 1, editor_.editMode ? C_ORANGE_MID : C_ORANGE_DK);
+      else if (showPlay && r == playRow_) screen_.fill(0, y, kCols, 1, C_ORANGE_DK);
+      else if (r % 4 == 0) screen_.fill(0, y, kCols, 1, C_ORANGE_DK);
+      if (sel && r >= r0 && r <= r1)
+        screen_.fill(kChanX0 + c0 * kChanW, y, (c1 - c0) * kChanW + 17, 1, C_ORANGE_MID);
+    }
+    const Color white = preview ? C_DIM : C_WHITE;
+    const Color orange = preview ? C_ORANGE_MID : C_ORANGE;
+
+    screen_.text(0, y, hex2(sr).c_str(), (sr % 4 == 0 && !preview) ? C_WHITE : C_DIM);
     for (int c = 0; c < kChannels; ++c) {
-      const Cell& cell = p.at(r, c);
+      const Cell& cell = src->at(sr, c);
       int x = kChanX0 + c * kChanW;
       screen_.glyph(x - 2, y, '|', C_DIM);
+      if (preview && cell.empty()) continue;
       std::string note = noteName(cell.note);
-      screen_.text(x, y, note.c_str(), cell.note == NOTE_NONE ? C_DIM : C_WHITE);
+      screen_.text(x, y, note.c_str(), cell.note == NOTE_NONE ? C_DIM : white);
       screen_.text(x + 4, y, cell.instrument == INST_NONE ? ".." : hex2(cell.instrument).c_str(),
-                   cell.instrument == INST_NONE ? C_DIM : C_ORANGE);
+                   cell.instrument == INST_NONE ? C_DIM : orange);
       screen_.text(x + 7, y, cell.volume == VOL_NONE ? ".." : hex2(cell.volume).c_str(),
-                   cell.volume == VOL_NONE ? C_DIM : C_ORANGE);
+                   cell.volume == VOL_NONE ? C_DIM : orange);
       for (int f = 0; f < kEffectColumns; ++f) {
         int fx = x + 10 + f * 4;
         if (cell.fx[f].cmd) {
           char b[4] = { (char)cell.fx[f].cmd, 0, 0, 0 };
-          screen_.text(fx, y, b, C_ORANGE);
-          screen_.text(fx + 1, y, hex2(cell.fx[f].param).c_str(), C_ORANGE);
+          screen_.text(fx, y, b, orange);
+          screen_.text(fx + 1, y, hex2(cell.fx[f].param).c_str(), orange);
         } else {
           screen_.text(fx, y, "...", C_DIM);
         }

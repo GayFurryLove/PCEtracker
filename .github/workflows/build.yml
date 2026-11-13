@@ -6,23 +6,23 @@ on:
 
 jobs:
   linux-i386:
-    # Native 32-bit userland in Docker. The job itself runs on the x86_64 host,
-    # because GitHub's own actions (checkout etc.) cannot run inside i386 containers.
+    # 32-bit x86 build (i686, no SSE2 requirement) with gcc-multilib.
+    # The x86_64 kernel runs the 32-bit test binaries natively.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Build and test in Debian i386
+      - name: Install 32-bit toolchain
         run: |
-          docker run --rm --network host --platform linux/386 -v "$PWD:/src" -w /src i386/debian:bookworm bash -ec '
-            echo "Acquire::Retries \"5\";" > /etc/apt/apt.conf.d/80retries
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends build-essential cmake > /dev/null
-            uname -m; gcc --version | head -1; cmake --version | head -1
-            cmake -S . -B build-i386 -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-march=i686" -DCMAKE_CXX_FLAGS="-march=i686"
-            cmake --build build-i386 -j2
-            ctest --test-dir build-i386 --output-on-failure
-            file build-i386/test_psg 2>/dev/null || true
-          '
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-multilib g++-multilib
+      - name: Configure
+        run: cmake -S . -B build-i386 -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-linux-i386.cmake
+      - name: Build
+        run: cmake --build build-i386 -j2
+      - name: Check binary is 32-bit
+        run: file build-i386/test_psg build-i386/psg_demo | tee /dev/stderr | grep -q "ELF 32-bit LSB.*Intel 80386"
+      - name: Test
+        run: ctest --test-dir build-i386 --output-on-failure
 
   windows-x64:
     runs-on: windows-latest

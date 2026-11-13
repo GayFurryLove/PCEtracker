@@ -17,15 +17,28 @@
 | # | Модуль | Каталог | Статус |
 |---|---|---|---|
 | 1 | Звуковой движок HuC6280 | `src/psg` | ✔ |
-| 2 | Движок трекера | `src/tracker` | — |
-| 3 | Инструменты | `src/instruments` | — |
-| 4 | Модуляция (макросы) | `src/instruments` | — |
-| 5 | Аудиорендерер | `src/audio` | — |
-| 6 | Экспорт WAV | `src/audio/wav_writer.*` | ✔ (запись файла) |
+| 2 | Движок трекера | `src/tracker/player.*` | ✔ |
+| 3 | Инструменты (данные) | `src/tracker/song.*` | ✔ модель; редактор — этап 4 |
+| 4 | Модуляция (макросы) | `src/tracker/player.*` | ✔ |
+| 5 | Аудиорендерер | `src/audio/song_render.*` | ✔ |
+| 6 | Экспорт WAV | `src/audio/wav_writer.*`, `tools/pcet_render` | ✔ |
 | 7 | Экспорт HES | `src/export` | — |
 | 8 | Экспорт ROM | `src/export` | — |
 | 9 | Интерфейс | `src/ui` | — |
-| 10 | Файлы проектов | `src/project` | — |
+| 10 | Файлы проектов | `src/project/text_format.*` | ✔ |
+
+## Модуль 2: `pce::Player` (`src/tracker/player.h`)
+
+| Вызов | Что делает |
+|---|---|
+| `Player(song)` | плеер над песней (песня принадлежит вызывающему) |
+| `playSong(order,row)` / `playPattern(p,row)` / `stop()` | управление |
+| `tick(RegisterSink&)` | один кадр 60 Гц: строки, эффекты, макросы → записи регистров |
+| `setMute(ch)` / `solo(ch)` | глушение громкостью 0 (канал остаётся включён) |
+| `order()/row()/view(ch)` | позиция и состояние каналов для UI |
+
+`RegisterSink` — интерфейс «куда писать регистры»: PSG (`SongRenderer`), лог в тестах,
+позже — верификатор экспорта. `SongRenderer::renderTick()` = тик плеера + 119210 тактов PSG.
 
 ## Ключевое правило: трекер = драйвер
 

@@ -4,7 +4,8 @@
 Клавиатурный процесс в духе ProTracker, ориентация на реальные возможности чипа,
 экспорт в WAV и в родные форматы консоли (HES, ROM).
 
-> Статус: **этап 1 из 8** — ядро звука HuC6280 и тесты. Интерфейса трекера пока нет.
+> Статус: **этап 2 из 8** — ядро звука HuC6280, движок трекера, текстовый формат песен,
+> рендер в WAV. Графического интерфейса пока нет: песни пишутся в текстовом файле.
 > План и список вырезанного: [docs/ROADMAP.md](docs/ROADMAP.md).
 > Устройство модулей: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -32,6 +33,16 @@ cmake -S . -B build -A x64
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
+
+## Отрендерить песню
+
+```bash
+./build/pcet_render songs/demo.pcet demo.wav
+./build/pcet_render songs/demo.pcet p1.wav --pattern 1      # один паттерн
+./build/pcet_render songs/demo.pcet hq.wav --rate 96000 --bits 24 --loops 1
+```
+
+Формат песни: [docs/FORMAT.md](docs/FORMAT.md). Эффекты и макросы: [docs/EFFECTS.md](docs/EFFECTS.md).
 
 ## Послушать ядро
 

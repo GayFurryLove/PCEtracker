@@ -39,9 +39,26 @@ target_link_libraries(pce_psg PUBLIC blip_buf)
 add_library(pce_wav STATIC src/audio/wav_writer.cpp)
 target_include_directories(pce_wav PUBLIC src)
 
+# --- modules 2-4: tracker engine, song model, instruments/macros -----------
+add_library(pce_tracker STATIC
+  src/tracker/song.cpp
+  src/tracker/player.cpp)
+target_include_directories(pce_tracker PUBLIC src)
+target_link_libraries(pce_tracker PUBLIC pce_psg) # register names only
+
+# --- module 10: project files ---------------------------------------------
+add_library(pce_project STATIC src/project/text_format.cpp)
+target_link_libraries(pce_project PUBLIC pce_tracker)
+
+# --- module 5: audio renderer (player -> PSG -> PCM/WAV) -------------------
+add_library(pce_render STATIC src/audio/song_render.cpp)
+target_link_libraries(pce_render PUBLIC pce_tracker pce_psg pce_wav)
+
 if(PCE_BUILD_TOOLS)
   add_executable(psg_demo tools/psg_demo.cpp)
   target_link_libraries(psg_demo PRIVATE pce_psg pce_wav)
+  add_executable(pcet_render tools/pcet_render.cpp)
+  target_link_libraries(pcet_render PRIVATE pce_render pce_project)
 endif()
 
 if(PCE_BUILD_TESTS)
@@ -50,7 +67,13 @@ if(PCE_BUILD_TESTS)
   target_link_libraries(test_psg PRIVATE pce_psg)
   add_test(NAME psg COMMAND test_psg)
 
+  add_executable(test_tracker tests/test_tracker.cpp)
+  target_link_libraries(test_tracker PRIVATE pce_render pce_project)
+  add_test(NAME tracker COMMAND test_tracker ${CMAKE_SOURCE_DIR}/songs/demo.pcet)
+
   if(PCE_BUILD_TOOLS)
     add_test(NAME psg_demo_render COMMAND psg_demo ${CMAKE_BINARY_DIR}/demo_test.wav --bits 24)
+    add_test(NAME song_render COMMAND pcet_render ${CMAKE_SOURCE_DIR}/songs/demo.pcet
+             ${CMAKE_BINARY_DIR}/song_test.wav --bits 24 --resave ${CMAKE_BINARY_DIR}/resaved.pcet)
   endif()
 endif()

@@ -7,6 +7,7 @@
 #include "export/hes_machine.h"
 #include "project/text_format.h"
 
+#include <algorithm>
 #include <stdio.h>
 #include <string.h>
 
@@ -43,7 +44,7 @@ static void testDriverBuilds() {
   std::vector<uint8_t> bank;
   uint16_t reset = 0;
   std::string err;
-  CHECK(buildDriverBank(3, &bank, &reset, &err));
+  CHECK(buildDriverBank(3, DriverOptions(), &bank, &reset, &err));
   CHECK(bank.size() == (size_t)kBankSize);
   CHECK(reset >= kDriverOrg && reset < kWaveTable);
   // reset vector at $FFFE points to the reset code
@@ -146,6 +147,34 @@ static void testOrderJumpLoop() {
   CHECK(st.framesIntro == 16 * 3 && st.framesLoop == 8 * 3);
 }
 
+static void testRom(const char* path) {
+  Song s;
+  std::string err;
+  if (!loadSongFile(path, &s, &err)) { CHECK(false); return; }
+  std::vector<uint8_t> rom;
+  ExportStats st;
+  CHECK(exportRom(s, &rom, &st, &err));
+  CHECK(rom.size() >= 0x8000 && (rom.size() & (rom.size() - 1)) == 0); // power of two
+  CHECK((rom[0x1FFE] | (rom[0x1FFF] << 8)) >= kDriverOrg);             // reset vector in bank 0
+  // The title is in the image (as tile numbers = ASCII - 32).
+  std::string want = "PCEtracker demo";
+  std::vector<uint8_t> pat;
+  for (size_t i = 0; i < want.size(); ++i) pat.push_back((uint8_t)(want[i] - 32));
+  bool found = false;
+  for (size_t i = 0; i + pat.size() < 0x2000 && !found; ++i) found = std::equal(pat.begin(), pat.end(), rom.begin() + (long)i);
+  CHECK(found);
+  VerifyReport vr;
+  bool ok = verifyRom(s, rom, 0, &vr);
+  printf("  rom: %u KB, %s (%d frames, %u reg writes, %u DDA values) %s\n", (unsigned)(rom.size() / 1024),
+         ok ? "verified" : "FAILED", vr.frames, (unsigned)vr.regWrites, (unsigned)vr.ddaWrites, vr.detail.c_str());
+  CHECK(ok);
+  // The HES and the ROM play the same stream.
+  std::vector<uint8_t> hes;
+  ExportStats hs;
+  CHECK(exportHes(s, &hes, &hs, &err));
+  CHECK(hs.streamBytes == st.streamBytes);
+}
+
 int main(int argc, char** argv) {
   const char* demo = argc > 1 ? argv[1] : "songs/demo.pcet";
   printf("driver builds\n");
@@ -156,6 +185,8 @@ int main(int argc, char** argv) {
   testDemo(demo);
   printf("stress song\n");
   testStress();
+  printf("hucard rom\n");
+  testRom(demo);
   printf("order jump loop\n");
   testOrderJumpLoop();
   printf("%d checks, %d failed\n", g_checks, g_failed);

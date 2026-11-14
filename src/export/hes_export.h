@@ -4,6 +4,7 @@
 #ifndef PCETRACKER_HES_EXPORT_H
 #define PCETRACKER_HES_EXPORT_H
 
+#include "export/driver6280.h"
 #include "tracker/song.h"
 
 #include <stdint.h>
@@ -23,8 +24,8 @@ struct ExportStats {
 };
 
 // Builds the bank-aligned program image (driver + samples + stream).
-bool buildSongImage(const Song& song, std::vector<uint8_t>* image, uint16_t* resetAddr,
-                    ExportStats* stats, std::string* err);
+bool buildSongImage(const Song& song, const DriverOptions& opt, std::vector<uint8_t>* image,
+                    uint16_t* resetAddr, ExportStats* stats, std::string* err);
 
 // Wraps the image in a HES file.
 bool exportHes(const Song& song, std::vector<uint8_t>* hes, ExportStats* stats, std::string* err);
@@ -42,6 +43,15 @@ struct VerifyReport {
 // register write with what the tracker's player produces for the same song.
 // frames <= 0: intro + two loops (capped at 10 minutes).
 bool verifyHes(const Song& song, const std::vector<uint8_t>& hes, int frames, VerifyReport* rep);
+
+// HuCard ROM (.pce): the same driver plus video setup and a title screen,
+// padded to a power of two (at least 32 KiB).
+bool exportRom(const Song& song, std::vector<uint8_t>* rom, ExportStats* stats, std::string* err);
+// Same comparison as verifyHes, booting the ROM like a console does
+// (only MPR7 = bank 0 is defined at reset).
+bool verifyRom(const Song& song, const std::vector<uint8_t>& rom, int frames, VerifyReport* rep);
+bool exportRomFile(const Song& song, const char* path, ExportStats* stats, VerifyReport* rep,
+                   std::string* err);
 
 // Export + verify + write. The file is only written when verification passes.
 bool exportHesFile(const Song& song, const char* path, ExportStats* stats, VerifyReport* rep,

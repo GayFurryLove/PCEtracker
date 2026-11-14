@@ -27,6 +27,10 @@ public:
 
   HesMachine();
   bool load(const std::vector<uint8_t>& hes, std::string* err);
+  // Boots a HuCard image like a console: only MPR7 = bank 0 is defined, the
+  // other MPRs hold garbage until the program sets them. Banks past the end
+  // of the image mirror (the card ignores the high address lines).
+  bool loadRom(const std::vector<uint8_t>& rom, std::string* err);
   // Runs one video frame (119665 CPU cycles) and appends the PSG writes.
   bool runFrame(std::vector<PsgWrite>* out);
   const std::string& error() const { return error_; }
@@ -49,6 +53,7 @@ private:
 
   std::vector<uint8_t> rom_;
   uint32_t romBase_;       // load address
+  bool hucard_;
   uint8_t ram_[0x2000];
   uint8_t mpr_[8];
   uint8_t a_, x_, y_, s_, p_;

@@ -42,6 +42,7 @@ private:
   void save();
   void exportWav();
   void exportHesFileAction();
+  void exportRomFileAction();
   void message(const std::string& m);
 
   void draw();

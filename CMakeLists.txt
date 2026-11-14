@@ -62,7 +62,9 @@ add_library(pce_export STATIC
   src/export/song_sim.cpp
   src/export/hes_export.cpp
   src/export/hes_machine.cpp
-  src/export/hes_verify.cpp)
+  src/export/hes_verify.cpp
+  src/export/rom_export.cpp)
+target_include_directories(pce_export PRIVATE third_party/font8x8)
 target_link_libraries(pce_export PUBLIC pce_render)
 
 if(PCE_BUILD_TOOLS)
@@ -137,7 +139,7 @@ if(PCE_BUILD_TESTS)
     add_test(NAME psg_demo_render COMMAND psg_demo ${CMAKE_BINARY_DIR}/demo_test.wav --bits 24)
     add_test(NAME song_render COMMAND pcet_render ${CMAKE_SOURCE_DIR}/songs/demo.pcet
              ${CMAKE_BINARY_DIR}/song_test.wav --bits 24 --resave ${CMAKE_BINARY_DIR}/resaved.pcet
-             --hes ${CMAKE_BINARY_DIR}/song_test.hes)
+             --hes ${CMAKE_BINARY_DIR}/song_test.hes --rom ${CMAKE_BINARY_DIR}/song_test.pce)
     add_test(NAME hes_play COMMAND hes_play ${CMAKE_BINARY_DIR}/song_test.hes
              ${CMAKE_BINARY_DIR}/hes_test.wav --seconds 5)
     set_tests_properties(hes_play PROPERTIES DEPENDS song_render)

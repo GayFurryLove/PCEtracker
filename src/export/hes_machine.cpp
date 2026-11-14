@@ -16,7 +16,7 @@ uint32_t rd32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((u
 }
 
 HesMachine::HesMachine()
-  : romBase_(0), a_(0), x_(0), y_(0), s_(0xFF), p_(FI), pc_(0), cycles_(0), frameStart_(0), frame_(0),
+  : romBase_(0), hucard_(false), a_(0), x_(0), y_(0), s_(0xFF), p_(FI), pc_(0), cycles_(0), frameStart_(0), frame_(0),
     timerOn_(false), timerIrq_(false), timerReload_(0), timerCount_(0), prescale_(0),
     irqMask_(0), irq1_(false), vdcReg_(0), vdcControl_(0), out_(0) {
   memset(ram_, 0, sizeof ram_);
@@ -40,6 +40,19 @@ bool HesMachine::load(const std::vector<uint8_t>& hes, std::string* err) {
   return true;
 }
 
+bool HesMachine::loadRom(const std::vector<uint8_t>& rom, std::string* err) {
+  if (rom.size() < 0x2000 || rom.size() % 0x2000) { *err = "ROM size must be a multiple of 8 KiB"; return false; }
+  rom_ = rom;
+  romBase_ = 0;
+  hucard_ = true;
+  for (int i = 0; i < 7; ++i) mpr_[i] = (uint8_t)(0x55 + i * 0x11); // undefined at power-on
+  mpr_[7] = 0x00;
+  pc_ = (uint16_t)(rd(0xFFFE) | (rd(0xFFFF) << 8));
+  s_ = 0xFF;
+  p_ = FI;
+  return true;
+}
+
 uint8_t HesMachine::rd(uint16_t a) {
   const uint8_t bank = mpr_[a >> 13];
   const uint32_t off = a & 0x1FFF;
@@ -58,6 +71,7 @@ uint8_t HesMachine::rd(uint16_t a) {
   }
   if (bank >= 0xF8 && bank <= 0xFB) return ram_[off];
   const uint32_t addr = (uint32_t)bank * 0x2000 + off;
+  if (hucard_ && bank < 0xF7 && !rom_.empty()) return rom_[addr % rom_.size()];
   if (addr >= romBase_ && addr - romBase_ < rom_.size()) return rom_[addr - romBase_];
   return 0xFF;
 }

@@ -20,8 +20,25 @@ std::string fmt(const char* f, int a, int b = 0, int c = 0, int d = 0) {
 }
 }
 
+static bool verifyOnMachine(const Song& song, HesMachine& m, int frames, VerifyReport* rep);
+
 bool verifyHes(const Song& song, const std::vector<uint8_t>& hes, int frames, VerifyReport* rep) {
   *rep = VerifyReport();
+  HesMachine m;
+  std::string err;
+  if (!m.load(hes, &err)) { rep->detail = err; return false; }
+  return verifyOnMachine(song, m, frames, rep);
+}
+
+bool verifyRom(const Song& song, const std::vector<uint8_t>& rom, int frames, VerifyReport* rep) {
+  *rep = VerifyReport();
+  HesMachine m;
+  std::string err;
+  if (!m.loadRom(rom, &err)) { rep->detail = err; return false; }
+  return verifyOnMachine(song, m, frames, rep);
+}
+
+static bool verifyOnMachine(const Song& song, HesMachine& m, int frames, VerifyReport* rep) {
 
   // --- reference: the tracker's player ---
   SongSim sim(song);
@@ -34,10 +51,7 @@ bool verifyHes(const Song& song, const std::vector<uint8_t>& hes, int frames, Ve
   }
   const int total = (int)ref.size();
 
-  // --- the HES file on the 6280 machine ---
-  HesMachine m;
-  std::string err;
-  if (!m.load(hes, &err)) { rep->detail = err; return false; }
+  // --- the program on the 6280 machine ---
   std::vector<HesMachine::PsgWrite> writes;
   // The driver switches the VBlank interrupt on during its start-up, so the
   // first music frame is the machine's second video frame (as on a console).

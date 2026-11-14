@@ -41,6 +41,7 @@ jobs:
             build-i386/psg_demo
             build-i386/hes_play
             build-i386/song_test.hes
+            build-i386/song_test.pce
             songs/demo.pcet
             ui-i386.bmp
 
@@ -69,4 +70,5 @@ jobs:
             build/Release/psg_demo.exe
             build/Release/hes_play.exe
             build/song_test.hes
+            build/song_test.pce
             songs/demo.pcet

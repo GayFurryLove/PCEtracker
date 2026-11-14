@@ -10,6 +10,7 @@
 
 #include "export/driver6280.h"
 #include "export/asm6280.h"
+#include "font8x8_basic.h"
 
 namespace pce {
 
@@ -36,13 +37,14 @@ uint16_t table(int t) { return (uint16_t)(kSampleTables + t * 64); }
 
 } // namespace
 
-bool buildDriverBank(uint8_t streamBank, std::vector<uint8_t>* bank, uint16_t* resetAddr,
-                     std::string* err) {
+bool buildDriverBank(uint8_t streamBank, const DriverOptions& opt, std::vector<uint8_t>* bank,
+                     uint16_t* resetAddr, std::string* err) {
   using namespace op6280;
   Asm6280 a(kDriverOrg);
   typedef Asm6280::Label L;
   L reset = a.label(), irq1 = a.label(), timer = a.label(), stub = a.label();
   L getb = a.label(), mapstream = a.label();
+  L fontData = a.label(), textData = a.label();
 
   // ---- reset -----------------------------------------------------------------
   a.bind(reset);
@@ -55,7 +57,85 @@ bool buildDriverBank(uint8_t streamBank, std::vector<uint8_t>* bank, uint16_t* r
   a.b(LDA_IMM, (uint8_t)(kStreamWindow >> 8)); a.b(STA_ZP, ZP_SPTR + 1);
   a.b(LDA_IMM, streamBank); a.b(STA_ZP, ZP_SBANK);
   a.wl(JSR, mapstream);
-  a.b(ST0, 0x05); a.b(ST1, 0x08); a.b(ST2, 0x00);   // VDC control: VBlank interrupt on
+  if (opt.hucard) {
+    // ---- HuCard: video chip, palette and title screen ----
+    // VDC timing for a 256 x 240 display (the standard values used by HuC):
+    // without valid timing the VDC never signals VBlank on real hardware.
+    static const uint8_t vdcInit[][3] = {
+      { 0x05, 0x00, 0x00 },   // control: display and interrupts off while we set up
+      { 0x07, 0x00, 0x00 },   // BXR scroll x
+      { 0x08, 0x00, 0x00 },   // BYR scroll y
+      { 0x09, 0x00, 0x00 },   // MWR: 32 x 32 background map
+      { 0x0A, 0x02, 0x02 },   // HSR
+      { 0x0B, 0x1F, 0x03 },   // HDR: 32 tiles wide
+      { 0x0C, 0x02, 0x0F },   // VPR
+      { 0x0D, 0xEF, 0x00 },   // VDW: 240 lines
+      { 0x0E, 0x03, 0x00 },   // VCR
+    };
+    a.w(LDA_ABS, 0x0000);                            // clear a pending VDC interrupt
+    for (size_t k = 0; k < sizeof vdcInit / sizeof vdcInit[0]; ++k) {
+      a.b(ST0, vdcInit[k][0]); a.b(ST1, vdcInit[k][1]); a.b(ST2, vdcInit[k][2]);
+    }
+    // VCE control: 5.37 MHz dot clock, bit 2 = 263 lines per frame (59.826 Hz, the
+    // rate the tracker plays at; 0 would give 262 lines and music 0.38 % fast).
+    a.b(LDA_IMM, 0x04); a.w(STA_ABS, 0x0400);
+    // palette: BG palette 0 = black + orange, palette 1 = black + white (9-bit GRB)
+    static const uint16_t colors[4][2] = { { 0, 0x000 }, { 1, 0x138 }, { 16, 0x000 }, { 17, 0x1FF } };
+    for (int k = 0; k < 4; ++k) {
+      a.b(LDA_IMM, (uint8_t)colors[k][0]); a.w(STA_ABS, 0x0402); a.w(STZ_ABS, 0x0403);
+      a.b(LDA_IMM, (uint8_t)colors[k][1]); a.w(STA_ABS, 0x0404);
+      a.b(LDA_IMM, (uint8_t)(colors[k][1] >> 8)); a.w(STA_ABS, 0x0405);
+    }
+    // font: 96 glyphs (ASCII 32..127) as 4-bit tiles 256..351 at VRAM $1000
+    a.b(ST0, 0x00); a.b(ST1, 0x00); a.b(ST2, 0x10); a.b(ST0, 0x02);
+    a.lo(LDA_IMM, fontData); a.b(STA_ZP, ZP_TMP);
+    a.hi(LDA_IMM, fontData); a.b(STA_ZP, ZP_TMP + 1);
+    a.b(LDA_IMM, 96); a.b(STA_ZP, ZP_DPTR);         // glyph counter (timer is still off)
+    { L glyph = a.hereLabel(), row = a.label(), pad = a.label();
+      a.b(LDY_IMM, 0x00);
+      a.bind(row);                                   // planes 0/1: the glyph row, 0
+      a.b(LDA_INDY, ZP_TMP); a.w(STA_ABS, 0x0002); a.w(STZ_ABS, 0x0003);
+      a.i(INY); a.b(CPY_IMM, 8); a.br(BNE, row);
+      a.b(LDY_IMM, 8);
+      a.bind(pad);                                   // planes 2/3: empty
+      a.w(STZ_ABS, 0x0002); a.w(STZ_ABS, 0x0003);
+      a.i(DEY); a.br(BNE, pad);
+      a.i(CLC); a.b(LDA_ZP, ZP_TMP); a.b(ADC_IMM, 8); a.b(STA_ZP, ZP_TMP);
+      { L nc = a.label(); a.br(BCC, nc); a.b(INC_ZP, ZP_TMP + 1); a.bind(nc); }
+      a.b(DEC_ZP, ZP_DPTR); a.br(BNE, glyph); }
+    // background map: 32 x 32 cells of tile 256 (space)
+    a.b(ST0, 0x00); a.b(ST1, 0x00); a.b(ST2, 0x00); a.b(ST0, 0x02);
+    a.b(LDX_IMM, 4);
+    { L outer = a.hereLabel(), inner = a.label();
+      a.b(LDY_IMM, 0x00);
+      a.bind(inner);
+      a.w(STZ_ABS, 0x0002); a.b(LDA_IMM, 0x01); a.w(STA_ABS, 0x0003);
+      a.i(DEY); a.br(BNE, inner);
+      a.i(DEX); a.br(BNE, outer); }
+    // text lines: [length][map address lo][hi][tile high byte][tile low bytes...], 0 = end
+    a.lo(LDA_IMM, textData); a.b(STA_ZP, ZP_TMP);
+    a.hi(LDA_IMM, textData); a.b(STA_ZP, ZP_TMP + 1);
+    { L line = a.hereLabel(), chars = a.label(), end = a.label();
+      a.b(LDY_IMM, 0x00);
+      a.b(LDA_INDY, ZP_TMP); a.br(BEQ, end);
+      a.b(STA_ZP, ZP_DPTR);                          // characters left
+      a.w(STZ_ABS, 0x0000);                          // VDC register 0 (MAWR)
+      a.i(INY); a.b(LDA_INDY, ZP_TMP); a.w(STA_ABS, 0x0002);
+      a.i(INY); a.b(LDA_INDY, ZP_TMP); a.w(STA_ABS, 0x0003);
+      a.b(LDA_IMM, 0x02); a.w(STA_ABS, 0x0000);      // VDC register 2 (VRAM data)
+      a.i(INY); a.b(LDA_INDY, ZP_TMP); a.b(STA_ZP, ZP_DPTR + 1); // tile high byte (palette | 1)
+      a.bind(chars);
+      a.i(INY); a.b(LDA_INDY, ZP_TMP); a.w(STA_ABS, 0x0002);
+      a.b(LDA_ZP, ZP_DPTR + 1); a.w(STA_ABS, 0x0003);
+      a.b(DEC_ZP, ZP_DPTR); a.br(BNE, chars);
+      a.i(INY);                                      // pointer += line size
+      a.i(TYA); a.i(CLC); a.b(ADC_ZP, ZP_TMP); a.b(STA_ZP, ZP_TMP);
+      { L nc = a.label(); a.br(BCC, nc); a.b(INC_ZP, ZP_TMP + 1); a.bind(nc); }
+      a.wl(JMP, line);
+      a.bind(end); }
+    a.w(LDA_ABS, 0x0000);
+  }
+  a.b(ST0, 0x05); a.b(ST1, opt.hucard ? 0x88 : 0x08); a.b(ST2, 0x00); // VDC: (background +) VBlank interrupt
   a.w(STZ_ABS, TIMER);                               // timer reload 0 -> 7.16 MHz / 1024
   a.b(LDA_IMM, 0x01); a.w(STA_ABS, TIMER + 1);       // timer on
   a.b(LDA_IMM, 0x01); a.w(STA_ABS, IRQ_MASK);        // IRQ2 off, VBlank and timer on
@@ -216,6 +296,32 @@ bool buildDriverBank(uint8_t streamBank, std::vector<uint8_t>* bank, uint16_t* r
   a.b(LDA_ZP, ZP_PSEL); a.w(STA_ABS, PSG);     // restore the frame code's channel select
   a.i(PLY); a.i(PLX); a.i(PLA);
   a.i(RTI);
+
+  // ---- HuCard data: font (bit order reversed for the VDC) and screen text ----
+  a.bind(fontData);
+  if (opt.hucard) {
+    for (int c = 32; c < 128; ++c)
+      for (int r = 0; r < 8; ++r) {
+        uint8_t v = (uint8_t)font8x8_basic[c][r], o = 0;
+        for (int b = 0; b < 8; ++b) if (v & (1 << b)) o |= (uint8_t)(0x80 >> b);
+        a.db(o);
+      }
+  }
+  a.bind(textData);
+  for (size_t k = 0; opt.hucard && k < opt.screen.size(); ++k) {
+    const ScreenText& t = opt.screen[k];
+    std::string s = t.text.substr(0, t.col < 32 ? (size_t)(32 - t.col) : 0);
+    if (s.empty() || t.row < 0 || t.row >= 32 || t.col < 0) continue;
+    const uint16_t addr = (uint16_t)(t.row * 32 + t.col);
+    a.db((uint8_t)s.size());
+    a.db((uint8_t)addr); a.db((uint8_t)(addr >> 8));
+    a.db(t.highlight ? 0x01 : 0x11);                 // palette 0 (orange) / 1 (white), tile 256+
+    for (size_t i = 0; i < s.size(); ++i) {
+      unsigned char ch = (unsigned char)s[i];
+      a.db((uint8_t)((ch >= 32 && ch < 128 ? ch : '?') - 32));
+    }
+  }
+  a.db(0);
 
   if (a.here() > kWaveTable) { *err = "driver: code too large"; return false; }
 

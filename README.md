@@ -8,7 +8,7 @@
 > окно трекера, экран инструмента (волны, макросы, DDA-семплы из WAV) и **экспорт HES**
 > с драйвером на 6280. HES проверяется встроенной машиной 6280 при каждом экспорте и
 > проверен в **Mednafen 1.32.1**; на консоли **ещё не проверено** — см. [docs/EXPORT.md](docs/EXPORT.md).
-> Дальше — ROM (HuCard).
+> Экспорт **HuCard ROM (.pce)** с экраном названия — тоже проверен в Mednafen.
 
 ![PCEtracker](docs/screenshot.png)
 
@@ -66,7 +66,8 @@ ctest --test-dir build -C Release --output-on-failure
 ./build/pcet_render songs/demo.pcet hq.wav --rate 96000 --bits 24 --loops 1
 ```
 
-Экспорт HES: `./build/pcet_render songs/demo.pcet demo.wav --hes demo.hes` (или `CTRL+H` в окне).
+Экспорт HES и ROM: `./build/pcet_render songs/demo.pcet demo.wav --hes demo.hes --rom demo.pce`
+(или `CTRL+H` / `CTRL+R` в окне).
 
 Формат песни: [docs/FORMAT.md](docs/FORMAT.md). Эффекты и макросы: [docs/EFFECTS.md](docs/EFFECTS.md).
 

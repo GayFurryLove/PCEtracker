@@ -96,8 +96,8 @@ void put32(uint8_t* p, uint32_t v) { put16(p, v & 0xFFFF); put16(p + 2, v >> 16)
 
 } // namespace
 
-bool buildSongImage(const Song& song, std::vector<uint8_t>* image, uint16_t* resetAddr,
-                    ExportStats* stats, std::string* err) {
+bool buildSongImage(const Song& song, const DriverOptions& opt, std::vector<uint8_t>* image,
+                    uint16_t* resetAddr, ExportStats* stats, std::string* err) {
   if (song.waves.size() > (size_t)kMaxWaves || song.samples.size() > (size_t)kMaxSamples) {
     *err = "too many waves or samples";
     return false;
@@ -132,7 +132,7 @@ bool buildSongImage(const Song& song, std::vector<uint8_t>* image, uint16_t* res
 
   // --- bank 0: driver + tables ---
   std::vector<uint8_t> bank0;
-  if (!buildDriverBank((uint8_t)streamBank, &bank0, resetAddr, err)) return false;
+  if (!buildDriverBank((uint8_t)streamBank, opt, &bank0, resetAddr, err)) return false;
   for (size_t w = 0; w < song.waves.size(); ++w)
     for (int k = 0; k < kWaveLength; ++k)
       bank0[(size_t)(kWaveTable - kDriverOrg) + w * kWaveLength + (size_t)k] = song.waves[w].data[k] & 0x1F;
@@ -170,7 +170,7 @@ bool buildSongImage(const Song& song, std::vector<uint8_t>* image, uint16_t* res
 bool exportHes(const Song& song, std::vector<uint8_t>* hes, ExportStats* stats, std::string* err) {
   std::vector<uint8_t> image;
   uint16_t reset = 0;
-  if (!buildSongImage(song, &image, &reset, stats, err)) return false;
+  if (!buildSongImage(song, DriverOptions(), &image, &reset, stats, err)) return false;
   hes->assign(0x20 + image.size(), 0x00);
   uint8_t* h = &(*hes)[0];
   memcpy(h, "HESM", 4);

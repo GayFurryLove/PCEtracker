@@ -57,6 +57,8 @@ public:
   void wl(uint8_t op, Label l) { db(op); fix(l, false); db(0); db(0); }             // absolute -> label
   void br(uint8_t op, Label l) { db(op); fix(l, true); db(0); }                     // relative branch
   void dwl(Label l) { fix(l, false); db(0); db(0); }                                // .dw label
+  void lo(uint8_t op, Label l) { db(op); fix(l, false, 1); db(0); }                 // #<label
+  void hi(uint8_t op, Label l) { db(op); fix(l, false, 2); db(0); }                 // #>label
   void padTo(uint16_t addr) { while (here() != addr && code_.size() < 0x10000) db(0xFF); }
 
   // Resolves labels. Fails on unbound labels or branches out of range.
@@ -65,6 +67,8 @@ public:
       const Fix& f = fixes_[k];
       int target = labels_[(size_t)f.label];
       if (target < 0) { *err = "driver: unbound label"; return false; }
+      if (f.part == 1) { code_[f.at] = (uint8_t)target; continue; }
+      if (f.part == 2) { code_[f.at] = (uint8_t)(target >> 8); continue; }
       if (f.relative) {
         int from = org_ + (int)f.at + 1;
         int d = target - from;
@@ -82,8 +86,8 @@ public:
   const std::vector<uint8_t>& code() const { return code_; }
 
 private:
-  struct Fix { size_t at; Label label; bool relative; };
-  void fix(Label l, bool rel) { Fix f = { code_.size(), l, rel }; fixes_.push_back(f); }
+  struct Fix { size_t at; Label label; bool relative; int part; }; // part: 0 word, 1 low, 2 high
+  void fix(Label l, bool rel, int part = 0) { Fix f = { code_.size(), l, rel, part }; fixes_.push_back(f); }
 
   uint16_t org_;
   std::vector<uint8_t> code_;

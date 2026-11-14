@@ -20,7 +20,8 @@ static void usage() {
          "  --loops N       extra passes of the whole song (default 0)\n"
          "  --tail SEC      silence after the end (default 1)\n"
          "  --resave FILE   also write the song back in canonical text form\n"
-         "  --hes FILE      also export a HES file (PC Engine sound format)\n");
+         "  --hes FILE      also export a HES file (PC Engine sound format)\n"
+         "  --rom FILE      also export a HuCard ROM (.pce) that plays the song\n");
 }
 
 int main(int argc, char** argv) {
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
   RenderOptions opt;
   const char* resave = 0;
   const char* hesPath = 0;
+  const char* romPath = 0;
   for (int i = 3; i < argc; ++i) {
     const char* a = argv[i];
     const char* v = i + 1 < argc ? argv[i + 1] : 0;
@@ -40,6 +42,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(a, "--tail")) opt.fadeSeconds = atof(v);
     else if (!strcmp(a, "--resave")) resave = v;
     else if (!strcmp(a, "--hes")) hesPath = v;
+    else if (!strcmp(a, "--rom")) romPath = v;
     else { usage(); return 2; }
     ++i;
   }
@@ -62,6 +65,15 @@ int main(int argc, char** argv) {
            (unsigned)(st.imageBytes + 0x20), (unsigned)st.streamBytes, (unsigned)st.sampleBytes,
            st.framesIntro, st.framesLoop, st.cleanLoop ? "" : "  WARNING: the loop does not repeat exactly");
     printf("  self-check on the built-in 6280 machine: %d frames, %u register writes identical, %u DDA values\n",
+           vr.frames, (unsigned)vr.regWrites, (unsigned)vr.ddaWrites);
+  }
+
+  if (romPath) {
+    ExportStats st;
+    VerifyReport vr;
+    if (!exportRomFile(song, romPath, &st, &vr, &err)) { printf("ROM export failed: %s\n", err.c_str()); return 1; }
+    printf("wrote %s: %u KB HuCard image\n", romPath, (unsigned)(st.imageBytes / 1024));
+    printf("  self-check (boot like a console): %d frames, %u register writes identical, %u DDA values\n",
            vr.frames, (unsigned)vr.regWrites, (unsigned)vr.ddaWrites);
   }
 

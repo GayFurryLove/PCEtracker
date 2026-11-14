@@ -35,11 +35,27 @@ enum StreamCmd { SC_WAVE = 0x10, SC_DDA_START = 0x20, SC_DDA_STEP = 0x28, SC_DDA
                  SC_END_FRAME = 0x80, SC_JUMP = 0xFF };
 const int kMaxWaitFrames = 0x7E;
 
+// A line of text on the HuCard title screen (32 x 28 visible 8x8 cells).
+struct ScreenText {
+  int row, col;
+  bool highlight;     // orange instead of white
+  std::string text;   // ASCII 32..126
+};
+
+struct DriverOptions {
+  // HuCard: the program owns the whole machine, so it sets up the video chip
+  // (VBlank only happens with valid VDC timing), the palette and a text
+  // screen. A HES player already did all of that and expects silence on screen.
+  bool hucard;
+  std::vector<ScreenText> screen;
+  DriverOptions() : hucard(false) {}
+};
+
 // Builds bank 0 (kBankSize bytes): code and vectors; the wave and sample
 // tables are left zeroed for the exporter to fill. `streamBank` is the bank
 // where the stream starts (at kStreamWindow).
-bool buildDriverBank(uint8_t streamBank, std::vector<uint8_t>* bank, uint16_t* resetAddr,
-                     std::string* err);
+bool buildDriverBank(uint8_t streamBank, const DriverOptions& opt, std::vector<uint8_t>* bank,
+                     uint16_t* resetAddr, std::string* err);
 
 } // namespace pce
 

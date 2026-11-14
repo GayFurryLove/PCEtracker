@@ -41,6 +41,11 @@ public:
   void frame(int col, int row, int w, int h, Color c);      // 1px box around cells
   void present();
 
+  // A pre-rendered string: drawing it is one blit instead of one per glyph.
+  // Used for text that repeats thousands of times per frame (empty cells).
+  SDL_Texture* makeString(const char* s, Color fg);
+  void blit(SDL_Texture* t, int col, int row);
+
 private:
   void setColor(Color c);
   SDL_Renderer* r_;

@@ -119,6 +119,9 @@ public:
   bool redo();
   bool dirty() const { return dirty_; }
   void markSaved() { dirty_ = false; }
+  // After loading another song: forget undo history and selection, cursor home.
+  void reset() { undo_.clear(); redo_.clear(); selActive_ = false; dirty_ = false; gesture_ = 0;
+                 order_ = row_ = ch_ = col_ = 0; instrument = 0; clampCursor(); }
 
 private:
   struct Snapshot {

@@ -45,18 +45,25 @@ struct Guard {
 
 void App::startTextEdit(int what) {
   textEdit_ = what;
-  textBuf_ = what == TEXT_INST_NAME ? editor_.currentInstrument().name : song_.title;
+  textBuf_ = what == TEXT_INST_NAME ? editor_.currentInstrument().name
+           : what == TEXT_SONG_TITLE ? song_.title : path_;
   SDL_StartTextInput();
-  message(what == TEXT_INST_NAME ? "Instrument name: type, ENTER = ok, ESC = cancel"
-                                 : "Song title: type, ENTER = ok, ESC = cancel");
+  if (what == TEXT_INST_NAME) message("Instrument name: type, ENTER = ok, ESC = cancel");
+  else if (what == TEXT_SONG_TITLE) message("Song title: type, ENTER = ok, ESC = cancel");
+  else redraw_ = true;
 }
 
 void App::handleTextInput(const char* text) {
   Guard g(audioDev_);
   for (const char* p = text; *p; ++p) {
     unsigned char c = (unsigned char)*p;
-    if (c >= 32 && c < 127 && c != '"' && textBuf_.size() < (textEdit_ == TEXT_INST_NAME ? 27u : 40u))
-      textBuf_ += (char)c; // ASCII only: the pixel font has no other glyphs
+    const bool path = textEdit_ == TEXT_OPEN || textEdit_ == TEXT_SAVE_AS;
+    if (path) {
+      // File names may contain any characters (shown as '?' by the ASCII font).
+      if (c >= 32 && textBuf_.size() < 400) textBuf_ += (char)c;
+    } else if (c >= 32 && c < 127 && c != '"' && textBuf_.size() < (textEdit_ == TEXT_INST_NAME ? 27u : 40u)) {
+      textBuf_ += (char)c; // names: ASCII only, the pixel font has no other glyphs
+    }
   }
   redraw_ = true;
 }
@@ -64,11 +71,23 @@ void App::handleTextInput(const char* text) {
 bool App::handleTextKey(const SDL_KeyboardEvent& k) {
   switch (k.keysym.scancode) {
     case SDL_SCANCODE_BACKSPACE:
-      if (!textBuf_.empty()) textBuf_.erase(textBuf_.size() - 1);
+      while (!textBuf_.empty()) {
+        unsigned char last = (unsigned char)textBuf_[textBuf_.size() - 1];
+        textBuf_.erase(textBuf_.size() - 1);
+        if ((last & 0xC0) != 0x80) break; // stop at the first byte of a UTF-8 character
+      }
       return true;
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
       if (textEdit_ == TEXT_INST_NAME) editor_.setInstrumentName(textBuf_);
-      else editor_.setSongTitle(textBuf_);
+      else if (textEdit_ == TEXT_SONG_TITLE) editor_.setSongTitle(textBuf_);
+      else if (!textBuf_.empty()) {
+        const int what = textEdit_;
+        textEdit_ = TEXT_NONE;
+        SDL_StopTextInput();
+        if (what == TEXT_OPEN) { openSong(textBuf_); }
+        else { path_ = textBuf_; save(); }
+        return true;
+      }
       // fall through
     case SDL_SCANCODE_ESCAPE:
       textEdit_ = TEXT_NONE;

@@ -63,13 +63,14 @@ App::App()
     messageTime_(0), showHelp_(false), quit_(false), quitArmed_(false), redraw_(true),
     followPlay_(true), jamCh_(-1), jamKey_(SDL_SCANCODE_UNKNOWN), playing_(false),
     playOrder_(0), playRow_(0), view_(VIEW_PATTERN), focus_(FOCUS_PARAMS), paramRow_(0),
-    waveCursor_(0), macroKind_(0), macroCursor_(0), drag_(0), textEdit_(TEXT_NONE) {
+    waveCursor_(0), macroKind_(0), macroCursor_(0), drag_(0), textEdit_(TEXT_NONE), emptyCell_(0) {
   for (int c = 0; c < kChannels; ++c) { muted_[c] = false; views_[c] = Player::ChannelView(); }
 }
 
 App::~App() {
   if (audioDev_) SDL_CloseAudioDevice(audioDev_);
   delete renderer_;
+  if (emptyCell_) SDL_DestroyTexture(emptyCell_);
   if (sdlRenderer_) SDL_DestroyRenderer(sdlRenderer_);
   if (window_) SDL_DestroyWindow(window_);
   SDL_Quit();
@@ -99,7 +100,9 @@ bool App::initVideo() {
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
   SDL_RenderSetLogicalSize(sdlRenderer_, kScreenW, kScreenH);
   updateScaling();
-  return screen_.init(sdlRenderer_);
+  if (!screen_.init(sdlRenderer_)) return false;
+  emptyCell_ = screen_.makeString("--- .. .. ... ...", C_DIM);
+  return true;
 }
 
 // Integer scaling keeps pixels sharp, but SDL cannot shrink with it: when the
@@ -156,11 +159,13 @@ int App::run(int argc, char** argv) {
 
   // Options: [song.pcet] [--screenshot out.bmp] [--edit] [--help-screen]
   const char* shot = 0;
+  bool bench = false;
   std::vector<const char*> args;
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--edit")) editor_.editMode = true;
     else if (!strcmp(argv[i], "--help-screen")) showHelp_ = true;
+    else if (!strcmp(argv[i], "--benchmark")) bench = true;
     else if (!strcmp(argv[i], "--instrument") && i + 1 < argc) { view_ = VIEW_INSTRUMENT; editor_.instrument = atoi(argv[++i]); }
     else args.push_back(argv[i]);
   }
@@ -190,6 +195,7 @@ int App::run(int argc, char** argv) {
     return 1;
   }
   SDL_StopTextInput(); // only on while a name is being typed
+  if (bench) return runBenchmark();
   if (shot) {
     // Render one frame to a BMP and exit (documentation, UI checks without a display).
     draw();
@@ -210,7 +216,8 @@ int App::run(int argc, char** argv) {
   while (!quit_) {
     SDL_Event e;
     // Sleep until input or the next display refresh (~30 fps while playing).
-    if (SDL_WaitEventTimeout(&e, playing_ || editor_.editMode ? 33 : 100)) {
+    // Wake up at most `fps` times per second while playing, rarely when idle.
+    if (SDL_WaitEventTimeout(&e, playing_ ? 1000 / cfg_.fps : 250)) {
       do {
         switch (e.type) {
           case SDL_QUIT:
@@ -239,12 +246,18 @@ int App::run(int argc, char** argv) {
       Guard g(audioDev_);
       if (renderer_) {
         Player& p = renderer_->player();
-        bool was = playing_;
+        // Redraw only when something visible changed (position or meters).
+        bool changed = playing_ != p.playing() || playOrder_ != p.order() || playRow_ != p.row();
         playing_ = p.playing();
         playOrder_ = p.order();
         playRow_ = p.row();
-        for (int c = 0; c < kChannels; ++c) views_[c] = p.view(c);
-        if (playing_ || was) redraw_ = true;
+        for (int c = 0; c < kChannels; ++c) {
+          Player::ChannelView v = p.view(c);
+          if (v.active != views_[c].active || v.volume != views_[c].volume || v.note != views_[c].note ||
+              v.period != views_[c].period) changed = true;
+          views_[c] = v;
+        }
+        if (changed) redraw_ = true;
         if (playing_ && followPlay_ && !editor_.editMode) {
           editor_.setOrder(playOrder_);
           editor_.setRow(playRow_);
@@ -286,6 +299,24 @@ void App::stopPlayback() {
   if (!renderer_) return;
   Guard g(audioDev_);
   renderer_->player().stop();
+}
+
+void App::openSong(const std::string& path) {
+  Song tmp;
+  std::string err;
+  if (!loadSongFile(path.c_str(), &tmp, &err)) { message("OPEN FAILED: " + err); return; }
+  Guard g(audioDev_);
+  if (renderer_) renderer_->player().stop();
+  song_ = tmp;          // Player and Editor keep referring to song_
+  editor_.reset();
+  if (renderer_) {
+    // Let the stop tick run, then drop all player state of the old song.
+    std::vector<int16_t> scratch;
+    renderer_->renderTick(scratch);
+  }
+  path_ = path;
+  quitArmed_ = false;
+  message("Loaded " + path_);
 }
 
 void App::save() {
@@ -405,7 +436,7 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
   const Uint16 mod = k.keysym.mod;
   const bool ctrl = (mod & KMOD_CTRL) != 0, shift = (mod & KMOD_SHIFT) != 0, alt = (mod & KMOD_ALT) != 0;
   redraw_ = true;
-  if (sc != SDL_SCANCODE_Q || !ctrl) quitArmed_ = false; // any other key cancels "quit?"
+  if (!ctrl || (sc != SDL_SCANCODE_Q && sc != SDL_SCANCODE_O)) quitArmed_ = false; // any other key cancels "quit?"
 
   if (showHelp_) {
     if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_F12) showHelp_ = false;
@@ -427,7 +458,11 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
         if (editor_.dirty() && !quitArmed_) { quitArmed_ = true; message("Unsaved changes! Ctrl+Q again to quit, Ctrl+S to save"); }
         else quit_ = true;
         return;
-      case SDL_SCANCODE_S: save(); return;
+      case SDL_SCANCODE_S: if (shift) startTextEdit(TEXT_SAVE_AS); else save(); return;
+      case SDL_SCANCODE_O:
+        if (editor_.dirty() && !quitArmed_) { quitArmed_ = true; message("Unsaved changes! CTRL+O again to open anyway, CTRL+S to save"); }
+        else { quitArmed_ = false; startTextEdit(TEXT_OPEN); }
+        return;
       case SDL_SCANCODE_E: exportWav(); return;
       case SDL_SCANCODE_H: exportHesFileAction(); return;
       case SDL_SCANCODE_R: exportRomFileAction(); return;
@@ -759,7 +794,10 @@ void App::drawPattern(int top, int bottom) {
       const Cell& cell = src->at(sr, c);
       int x = kChanX0 + c * kChanW;
       screen_.glyph(x - 2, y, '|', C_DIM);
-      if (preview && cell.empty()) continue;
+      if (cell.empty()) {
+        if (!preview) screen_.blit(emptyCell_, x, y);
+        continue;
+      }
       std::string note = noteName(cell.note);
       screen_.text(x, y, note.c_str(), cell.note == NOTE_NONE ? C_DIM : white);
       screen_.text(x + 4, y, cell.instrument == INST_NONE ? ".." : hex2(cell.instrument).c_str(),
@@ -808,6 +846,12 @@ void App::drawPattern(int top, int bottom) {
 
 void App::drawStatus() {
   screen_.fill(0, kRows - 1, kCols, 1, C_ORANGE);
+  if (textEdit_ == TEXT_OPEN || textEdit_ == TEXT_SAVE_AS) {
+    std::string p = (textEdit_ == TEXT_OPEN ? "OPEN: " : "SAVE AS: ") + textBuf_ + "_";
+    if (p.size() > (size_t)kCols - 2) p = "..." + p.substr(p.size() - (kCols - 5));
+    screen_.text(1, kRows - 1, p.c_str(), C_BLACK);
+    return;
+  }
   std::string s = message_.empty()
       ? std::string(view_ == VIEW_INSTRUMENT
                     ? "TAB focus  ARROWS edit  NOTE KEYS preview  ENTER play/stop  F9 patterns  F12 help"
@@ -841,7 +885,8 @@ void App::drawHelp() {
     "",
     "F1/F2 octave   F3/F4 instrument   F5/F6 edit step   CTRL+1..6 mute   CTRL+SHIFT+1..6 solo",
     "F9 pattern screen   F10 instrument screen   CTRL+T song title   drop .wav = DDA sample",
-    "CTRL+S save   CTRL+E export WAV   CTRL+H export HES   CTRL+R export ROM (.pce)   CTRL+Q quit",
+    "CTRL+O open   CTRL+S save   CTRL+SHIFT+S save as   CTRL+Q quit",
+    "CTRL+E export WAV   CTRL+H export HES   CTRL+R export HuCard ROM (.pce)",
     "",
     "Effects: 0 arp  1/2 slide  3 porta  4 vibrato  8 pan  A vol slide  B jump  C cut  D break",
     "         F speed  G main vol  L/M LFO  N noise (ch5-6)  P detune  R retrig  W wave",
@@ -852,6 +897,62 @@ void App::drawHelp() {
   screen_.fill(x, y, w, h, C_BLACK);
   screen_.frame(x, y, w, h, C_ORANGE);
   for (int i = 0; i < n; ++i) screen_.text(x + 2, y + 1 + i, lines[i], i == 0 ? C_ORANGE : C_WHITE);
+}
+
+// --- benchmark (pcetracker song.pcet --benchmark) --------------------------------
+// Measures what the program costs on this machine: audio rendering (the work
+// done in the audio callback) and full redraws of both screens.
+
+int App::runBenchmark() {
+  SDL_RendererInfo ri;
+  SDL_GetRendererInfo(sdlRenderer_, &ri);
+  printf("PCEtracker benchmark\n");
+  printf("  video driver: %s, renderer: %s\n", SDL_GetCurrentVideoDriver(), ri.name);
+  const double freq = (double)SDL_GetPerformanceFrequency();
+
+  // Audio: 20 s of the song at the configured rate, as the audio callback would.
+  {
+    SongRenderer r(song_, cfg_.revisionA ? PSG_REV_HUC6280A : PSG_REV_HUC6280, cfg_.audioRate);
+    r.player().playSong();
+    std::vector<int16_t> pcm;
+    pcm.reserve((size_t)cfg_.audioRate);
+    const int ticks = 20 * 60;
+    Uint64 t0 = SDL_GetPerformanceCounter();
+    for (int i = 0; i < ticks; ++i) {
+      if (!r.player().playing()) r.player().playSong();
+      pcm.clear();
+      r.renderTick(pcm);
+    }
+    double sec = (SDL_GetPerformanceCounter() - t0) / freq;
+    double audio = ticks * (double)kFrameClocks / Psg::kClockHz;
+    printf("  audio: %.1f s of music rendered in %.3f s = %.2f %% of one CPU core (%.0fx real time)\n",
+           audio, sec, 100.0 * sec / audio, audio / sec);
+  }
+
+  // UI: full redraws of the pattern screen (while playing) and the instrument screen.
+  const char* names[2] = { "pattern screen", "instrument screen" };
+  for (int v = 0; v < 2; ++v) {
+    view_ = v == 0 ? VIEW_PATTERN : VIEW_INSTRUMENT;
+    playing_ = v == 0;
+    for (int c = 0; c < kChannels; ++c) { views_[c].active = true; views_[c].volume = 20; views_[c].note = 45; views_[c].period = 254; }
+    const int frames = 120;
+    double worst = 0;
+    Uint64 t0 = SDL_GetPerformanceCounter();
+    for (int i = 0; i < frames; ++i) {
+      Uint64 a = SDL_GetPerformanceCounter();
+      editor_.setRow(i % editor_.pattern().rows);
+      draw();
+      double d = (SDL_GetPerformanceCounter() - a) / freq;
+      if (d > worst) worst = d;
+    }
+    double sec = (SDL_GetPerformanceCounter() - t0) / freq;
+    printf("  %s: %.2f ms per full redraw (worst %.2f ms); at 30 redraws/s = %.1f %% of one core\n",
+           names[v], 1000.0 * sec / frames, 1000.0 * worst, 100.0 * sec / frames * 30.0);
+  }
+  playing_ = false;
+  view_ = VIEW_PATTERN;
+  printf("  (an idle window is not redrawn at all; 30 redraws/s only while playing or editing)\n");
+  return 0;
 }
 
 } // namespace pce

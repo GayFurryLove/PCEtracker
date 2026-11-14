@@ -13,6 +13,7 @@ struct Config {
   int fullscreen;     // 0 window, 1 fullscreen, 2 auto (fullscreen if the window does not fit)
   bool softwareRender;// force SDL's software renderer (no GPU needed)
   bool vsync;
+  int fps;            // screen updates per second while playing (10..60)
   int audioRate;      // output sample rate
   int audioBuffer;    // samples per audio callback (bigger = safer on slow CPUs)
   bool revisionA;     // HuC6280A (true) or HuC6280 (false)

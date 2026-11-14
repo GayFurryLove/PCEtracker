@@ -40,6 +40,7 @@ private:
   void playPattern();
   void stopPlayback();
   void save();
+  void openSong(const std::string& path);
   void exportWav();
   void exportHesFileAction();
   void exportRomFileAction();
@@ -54,6 +55,7 @@ private:
   void drawPattern(int top, int bottom);
   void drawStatus();
   void drawHelp();
+  int runBenchmark();
 
   // Instrument screen (app_instrument.cpp)
   bool handleInstrumentKey(const SDL_KeyboardEvent& k);
@@ -93,7 +95,7 @@ private:
 
   enum View { VIEW_PATTERN = 0, VIEW_INSTRUMENT };
   enum Focus { FOCUS_PARAMS = 0, FOCUS_WAVE, FOCUS_MACRO, FOCUS_COUNT };
-  enum TextEdit { TEXT_NONE = 0, TEXT_INST_NAME, TEXT_SONG_TITLE };
+  enum TextEdit { TEXT_NONE = 0, TEXT_INST_NAME, TEXT_SONG_TITLE, TEXT_OPEN, TEXT_SAVE_AS };
   int view_;
   int focus_;
   int paramRow_;      // 0 = name, 1.. = InstField + 1
@@ -103,6 +105,7 @@ private:
   int drag_;          // 0 none, 1 wave, 2 macro (mouse drawing)
   int textEdit_;
   std::string textBuf_;
+  SDL_Texture* emptyCell_;   // "--- .. .. ... ..." pre-rendered (most cells are empty)
 };
 
 } // namespace pce

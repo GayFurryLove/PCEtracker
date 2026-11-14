@@ -32,6 +32,9 @@ jobs:
           SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software \
             ./build-i386/pcetracker songs/demo.pcet --screenshot ui-i386.bmp
           file ui-i386.bmp
+      - name: Benchmark (i386, software renderer, no display)
+        run: |
+          SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software             ./build-i386/pcetracker songs/demo.pcet --benchmark
       - uses: actions/upload-artifact@v4
         with:
           name: pcetracker-linux-i386

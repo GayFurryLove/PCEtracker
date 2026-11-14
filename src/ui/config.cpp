@@ -11,7 +11,7 @@
 namespace pce {
 
 Config::Config()
-  : scale(1), fullscreen(2), softwareRender(false), vsync(true),
+  : scale(1), fullscreen(2), softwareRender(false), vsync(true), fps(30),
     audioRate(44100), audioBuffer(1024), revisionA(true) {}
 
 std::string Config::defaultPath() {
@@ -31,6 +31,8 @@ static const char* kDefaultText =
   "# 1 = SDL software renderer (no GPU acceleration needed)\n"
   "software_render=0\n"
   "vsync=1\n"
+  "# Screen updates per second while playing. Lower it on a slow CPU (20, 15).\n"
+  "fps=30\n"
   "# Audio output. Raise audio_buffer (2048, 4096) if sound crackles on a slow CPU.\n"
   "audio_rate=44100\n"
   "audio_buffer=1024\n"
@@ -56,6 +58,7 @@ void Config::load(const std::string& path) {
     else if (!strcmp(key, "fullscreen")) fullscreen = !strncmp(val, "auto", 4) ? 2 : (v != 0);
     else if (!strcmp(key, "software_render")) softwareRender = v != 0;
     else if (!strcmp(key, "vsync")) vsync = v != 0;
+    else if (!strcmp(key, "fps")) fps = v < 10 ? 10 : (v > 60 ? 60 : v);
     else if (!strcmp(key, "audio_rate")) audioRate = (v >= 8000 && v <= 192000) ? v : 44100;
     else if (!strcmp(key, "audio_buffer")) audioBuffer = (v >= 256 && v <= 16384) ? v : 1024;
     else if (!strcmp(key, "revision")) revisionA = strncmp(val, "6280a", 5) == 0;

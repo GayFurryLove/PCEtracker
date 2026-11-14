@@ -100,4 +100,35 @@ void Screen::textBg(int col, int row, const char* s, Color fg, Color bg) {
 
 void Screen::present() { SDL_RenderPresent(r_); }
 
+SDL_Texture* Screen::makeString(const char* s, Color fg) {
+  int n = 0;
+  while (s[n]) ++n;
+  if (n == 0) return 0;
+  SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, n * kCell, kCell, 32, SDL_PIXELFORMAT_ARGB8888);
+  if (!surf) return 0;
+  const Uint32 on = 0xFF000000u | ((Uint32)kPalette[fg][0] << 16) | ((Uint32)kPalette[fg][1] << 8) | kPalette[fg][2];
+  SDL_LockSurface(surf);
+  for (int i = 0; i < n; ++i) {
+    unsigned char ch = (unsigned char)s[i];
+    for (int y = 0; y < kCell; ++y) {
+      Uint32* row = (Uint32*)((Uint8*)surf->pixels + y * surf->pitch) + i * kCell;
+      for (int x = 0; x < kCell; ++x)
+        row[x] = (ch < 128 && ((font8x8_basic[ch][y] >> x) & 1)) ? on : 0x00000000u;
+    }
+  }
+  SDL_UnlockSurface(surf);
+  SDL_Texture* t = SDL_CreateTextureFromSurface(r_, surf);
+  SDL_FreeSurface(surf);
+  if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+  return t;
+}
+
+void Screen::blit(SDL_Texture* t, int col, int row) {
+  if (!t) return;
+  int w = 0, h = 0;
+  SDL_QueryTexture(t, 0, 0, &w, &h);
+  SDL_Rect dst = { col * kCell, row * kCell, w, h };
+  SDL_RenderCopy(r_, t, 0, &dst);
+}
+
 } // namespace pce

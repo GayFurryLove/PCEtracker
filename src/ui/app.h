@@ -41,6 +41,7 @@ private:
   void stopPlayback();
   void save();
   void exportWav();
+  void exportHesFileAction();
   void message(const std::string& m);
 
   void draw();

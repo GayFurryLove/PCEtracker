@@ -2,6 +2,7 @@
 // Copyright (C) 2026 PCEtracker contributors. GPL-2.0-or-later, see LICENSE.
 
 #include "audio/song_render.h"
+#include "export/hes_export.h"
 #include "project/text_format.h"
 
 #include <stdio.h>
@@ -18,13 +19,15 @@ static void usage() {
          "  --pattern N     render only pattern N (hex), once\n"
          "  --loops N       extra passes of the whole song (default 0)\n"
          "  --tail SEC      silence after the end (default 1)\n"
-         "  --resave FILE   also write the song back in canonical text form\n");
+         "  --resave FILE   also write the song back in canonical text form\n"
+         "  --hes FILE      also export a HES file (PC Engine sound format)\n");
 }
 
 int main(int argc, char** argv) {
   if (argc < 3) { usage(); return 2; }
   RenderOptions opt;
   const char* resave = 0;
+  const char* hesPath = 0;
   for (int i = 3; i < argc; ++i) {
     const char* a = argv[i];
     const char* v = i + 1 < argc ? argv[i + 1] : 0;
@@ -36,6 +39,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(a, "--loops")) opt.loops = atoi(v);
     else if (!strcmp(a, "--tail")) opt.fadeSeconds = atof(v);
     else if (!strcmp(a, "--resave")) resave = v;
+    else if (!strcmp(a, "--hes")) hesPath = v;
     else { usage(); return 2; }
     ++i;
   }
@@ -49,6 +53,17 @@ int main(int argc, char** argv) {
   std::string err;
   if (!loadSongFile(argv[1], &song, &err)) { printf("%s: %s\n", argv[1], err.c_str()); return 1; }
   if (resave && !saveSongFile(resave, song, &err)) { printf("%s\n", err.c_str()); return 1; }
+
+  if (hesPath) {
+    ExportStats st;
+    VerifyReport vr;
+    if (!exportHesFile(song, hesPath, &st, &vr, &err)) { printf("HES export failed: %s\n", err.c_str()); return 1; }
+    printf("wrote %s: %u bytes (stream %u, samples %u), %d + %d frames%s\n", hesPath,
+           (unsigned)(st.imageBytes + 0x20), (unsigned)st.streamBytes, (unsigned)st.sampleBytes,
+           st.framesIntro, st.framesLoop, st.cleanLoop ? "" : "  WARNING: the loop does not repeat exactly");
+    printf("  self-check on the built-in 6280 machine: %d frames, %u register writes identical, %u DDA values\n",
+           vr.frames, (unsigned)vr.regWrites, (unsigned)vr.ddaWrites);
+  }
 
   double sec = 0;
   if (!renderSongToWav(song, opt, argv[2], &err, &sec)) { printf("%s\n", err.c_str()); return 1; }

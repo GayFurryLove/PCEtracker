@@ -22,7 +22,7 @@
 | 4 | Модуляция (макросы) | `src/tracker/player.*` | ✔ |
 | 5 | Аудиорендерер | `src/audio/song_render.*` | ✔ |
 | 6 | Экспорт WAV | `src/audio/wav_writer.*`, `tools/pcet_render` | ✔ |
-| 7 | Экспорт HES | `src/export` | — |
+| 7 | Экспорт HES | `src/export` (драйвер, поток, сверка на машине 6280) | ✔ |
 | 8 | Экспорт ROM | `src/export` | — |
 | 9 | Интерфейс | `src/ui` (SDL2), логика правки — `src/tracker/editor.*` | ✔ |
 | 10 | Файлы проектов | `src/project/text_format.*` | ✔ |

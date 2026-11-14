@@ -2,6 +2,7 @@
 // Copyright (C) 2026 PCEtracker contributors. GPL-2.0-or-later, see LICENSE.
 
 #include "ui/app.h"
+#include "export/hes_export.h"
 #include "project/text_format.h"
 
 #include <stdio.h>
@@ -318,6 +319,25 @@ void App::exportWav() {
   message(ok ? "Exported " + out + b : "EXPORT FAILED: " + err);
 }
 
+void App::exportHesFileAction() {
+  std::string out = path_;
+  size_t dot = out.rfind('.');
+  if (dot != std::string::npos && out.find_first_of("/\\", dot) == std::string::npos) out.erase(dot);
+  out += ".hes";
+  ExportStats st;
+  VerifyReport vr;
+  std::string err;
+  bool ok;
+  {
+    Guard g(audioDev_);
+    ok = exportHesFile(song_, out.c_str(), &st, &vr, &err);
+  }
+  char b[160];
+  snprintf(b, sizeof b, " (%u KB, self-check ok: %d frames, %u writes)", (unsigned)((st.imageBytes + 1023) / 1024),
+           vr.frames, (unsigned)vr.regWrites);
+  message(ok ? "Exported " + out + b : "HES EXPORT FAILED: " + err);
+}
+
 // --- keyboard ---------------------------------------------------------------
 
 bool App::noteKey(SDL_Scancode sc, int* note) const {
@@ -390,6 +410,7 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
         return;
       case SDL_SCANCODE_S: save(); return;
       case SDL_SCANCODE_E: exportWav(); return;
+      case SDL_SCANCODE_H: exportHesFileAction(); return;
       case SDL_SCANCODE_Z: if (shift ? editor_.redo() : editor_.undo()) message(shift ? "Redo" : "Undo"); return;
       case SDL_SCANCODE_Y: if (editor_.redo()) message("Redo"); return;
       case SDL_SCANCODE_C: editor_.copy(); message("Copied"); return;
@@ -800,7 +821,7 @@ void App::drawHelp() {
     "",
     "F1/F2 octave   F3/F4 instrument   F5/F6 edit step   CTRL+1..6 mute   CTRL+SHIFT+1..6 solo",
     "F9 pattern screen   F10 instrument screen   CTRL+T song title   drop .wav = DDA sample",
-    "CTRL+S save    CTRL+E export WAV  CTRL+Q quit",
+    "CTRL+S save    CTRL+E export WAV  CTRL+H export HES  CTRL+Q quit",
     "",
     "Effects: 0 arp  1/2 slide  3 porta  4 vibrato  8 pan  A vol slide  B jump  C cut  D break",
     "         F speed  G main vol  L/M LFO  N noise (ch5-6)  P detune  R retrig  W wave",

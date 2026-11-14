@@ -39,6 +39,8 @@ jobs:
             build-i386/pcetracker
             build-i386/pcet_render
             build-i386/psg_demo
+            build-i386/hes_play
+            build-i386/song_test.hes
             songs/demo.pcet
             ui-i386.bmp
 
@@ -65,4 +67,6 @@ jobs:
             build/Release/SDL2.dll
             build/Release/pcet_render.exe
             build/Release/psg_demo.exe
+            build/Release/hes_play.exe
+            build/song_test.hes
             songs/demo.pcet

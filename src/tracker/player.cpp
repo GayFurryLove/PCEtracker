@@ -403,7 +403,19 @@ bool Player::ddaActive() const {
   return false;
 }
 
+Player::DdaView Player::ddaView(int c) const {
+  DdaView v;
+  v.on = ch_[c].ddaOn && ch_[c].active && ch_[c].ddaSample >= 0;
+  v.sample = ch_[c].ddaSample;
+  v.step = ch_[c].ddaStepV;
+  v.pos = ch_[c].ddaPos;
+  return v;
+}
+
+// Mirrors the driver's timer interrupt: select the channel, write the sample,
+// and put the channel select back where the frame code left it.
 void Player::ddaTick(RegisterSink& out) {
+  bool wrote = false;
   for (int c = 0; c < kChannels; ++c) {
     Channel& ch = ch_[c];
     if (!ch.ddaOn || !ch.active || ch.ddaSample < 0) continue;
@@ -418,10 +430,12 @@ void Player::ddaTick(RegisterSink& out) {
         continue;
       }
     }
-    selectChannel(out, c);
+    out.write(REG_SELECT, (uint8_t)c);
     out.write(REG_WAVE_DATA, (uint8_t)(smp.data[idx] & 0x1F));
     ch.ddaPos += ch.ddaStepV;
+    wrote = true;
   }
+  if (wrote && hwSelect_ >= 0) out.write(REG_SELECT, (uint8_t)hwSelect_);
 }
 
 void Player::advanceRow() {

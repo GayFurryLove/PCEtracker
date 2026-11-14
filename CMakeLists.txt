@@ -56,11 +56,22 @@ target_link_libraries(pce_project PUBLIC pce_tracker)
 add_library(pce_render STATIC src/audio/song_render.cpp src/audio/wav_reader.cpp)
 target_link_libraries(pce_render PUBLIC pce_tracker pce_psg pce_wav)
 
+# --- modules 7/8: console export (6280 driver, HES) + verification machine ---
+add_library(pce_export STATIC
+  src/export/driver6280.cpp
+  src/export/song_sim.cpp
+  src/export/hes_export.cpp
+  src/export/hes_machine.cpp
+  src/export/hes_verify.cpp)
+target_link_libraries(pce_export PUBLIC pce_render)
+
 if(PCE_BUILD_TOOLS)
+  add_executable(hes_play tools/hes_play.cpp)
+  target_link_libraries(hes_play PRIVATE pce_export)
   add_executable(psg_demo tools/psg_demo.cpp)
   target_link_libraries(psg_demo PRIVATE pce_psg pce_wav)
   add_executable(pcet_render tools/pcet_render.cpp)
-  target_link_libraries(pcet_render PRIVATE pce_render pce_project)
+  target_link_libraries(pcet_render PRIVATE pce_export pce_project)
 endif()
 
 # --- module 9: user interface (SDL2) ----------------------------------------
@@ -93,7 +104,7 @@ if(PCE_BUILD_APP)
       src/ui/config.cpp
       src/ui/screen.cpp)
     target_include_directories(pcetracker PRIVATE src third_party/font8x8 ${PCE_SDL2_INCLUDES})
-    target_link_libraries(pcetracker PRIVATE pce_render pce_project ${PCE_SDL2_LIBS})
+    target_link_libraries(pcetracker PRIVATE pce_export pce_project ${PCE_SDL2_LIBS})
     if(WIN32 AND TARGET SDL2::SDL2)
       add_custom_command(TARGET pcetracker POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:pcetracker>)
@@ -114,6 +125,10 @@ if(PCE_BUILD_TESTS)
   target_link_libraries(test_tracker PRIVATE pce_render pce_project)
   add_test(NAME tracker COMMAND test_tracker ${CMAKE_SOURCE_DIR}/songs/demo.pcet)
 
+  add_executable(test_export tests/test_export.cpp)
+  target_link_libraries(test_export PRIVATE pce_export pce_project)
+  add_test(NAME export COMMAND test_export ${CMAKE_SOURCE_DIR}/songs/demo.pcet)
+
   add_executable(test_editor tests/test_editor.cpp)
   target_link_libraries(test_editor PRIVATE pce_tracker)
   add_test(NAME editor COMMAND test_editor)
@@ -121,6 +136,10 @@ if(PCE_BUILD_TESTS)
   if(PCE_BUILD_TOOLS)
     add_test(NAME psg_demo_render COMMAND psg_demo ${CMAKE_BINARY_DIR}/demo_test.wav --bits 24)
     add_test(NAME song_render COMMAND pcet_render ${CMAKE_SOURCE_DIR}/songs/demo.pcet
-             ${CMAKE_BINARY_DIR}/song_test.wav --bits 24 --resave ${CMAKE_BINARY_DIR}/resaved.pcet)
+             ${CMAKE_BINARY_DIR}/song_test.wav --bits 24 --resave ${CMAKE_BINARY_DIR}/resaved.pcet
+             --hes ${CMAKE_BINARY_DIR}/song_test.hes)
+    add_test(NAME hes_play COMMAND hes_play ${CMAKE_BINARY_DIR}/song_test.hes
+             ${CMAKE_BINARY_DIR}/hes_test.wav --seconds 5)
+    set_tests_properties(hes_play PROPERTIES DEPENDS song_render)
   endif()
 endif()

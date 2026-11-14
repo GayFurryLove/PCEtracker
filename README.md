@@ -4,8 +4,11 @@
 Клавиатурный процесс в духе ProTracker, ориентация на реальные возможности чипа,
 экспорт в WAV и в родные форматы консоли (HES, ROM).
 
-> Статус: **этап 4 из 8** — ядро звука HuC6280, движок трекера, формат песен, рендер в WAV,
-> окно трекера и экран инструмента (волны, макросы, DDA-семплы из WAV). Дальше — экспорт HES/ROM.
+> Статус: **этап 6 из 8** — ядро звука HuC6280, движок трекера, формат песен, рендер в WAV,
+> окно трекера, экран инструмента (волны, макросы, DDA-семплы из WAV) и **экспорт HES**
+> с драйвером на 6280. HES проверяется встроенной машиной 6280 при каждом экспорте;
+> в сторонних эмуляторах и на консоли **ещё не проверено** — см. [docs/EXPORT.md](docs/EXPORT.md).
+> Дальше — ROM (HuCard).
 
 ![PCEtracker](docs/screenshot.png)
 
@@ -62,6 +65,8 @@ ctest --test-dir build -C Release --output-on-failure
 ./build/pcet_render songs/demo.pcet p1.wav --pattern 1      # один паттерн
 ./build/pcet_render songs/demo.pcet hq.wav --rate 96000 --bits 24 --loops 1
 ```
+
+Экспорт HES: `./build/pcet_render songs/demo.pcet demo.wav --hes demo.hes` (или `CTRL+H` в окне).
 
 Формат песни: [docs/FORMAT.md](docs/FORMAT.md). Эффекты и макросы: [docs/EFFECTS.md](docs/EFFECTS.md).
 

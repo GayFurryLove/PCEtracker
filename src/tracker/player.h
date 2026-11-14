@@ -49,6 +49,9 @@ public:
   // between ticks. Writes the next 5-bit sample of each playing DDA channel.
   void ddaTick(RegisterSink& out);
   bool ddaActive() const;
+  // DDA state of a channel, for the exporters (on = sample data is being written).
+  struct DdaView { bool on; int sample; uint16_t step; uint32_t pos; };
+  DdaView ddaView(int ch) const;
 
   void setMute(int ch, bool muted);
   bool muted(int ch) const { return ch_[ch].muted; }

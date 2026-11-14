@@ -13,8 +13,9 @@
 
 namespace pce {
 
-// One NTSC frame in PSG clocks: 262 lines * 1365 master clocks / 3.
-const uint32_t kFrameClocks = 119210;
+// One NTSC frame in PSG clocks: 263 lines * 1365 master clocks / 3 = 119665
+// (59.826 Hz). Checked against Mednafen: 262 lines would run 0.38 % fast.
+const uint32_t kFrameClocks = 119665;
 
 // Feeds player register writes into a Psg and produces audio, one tick at a time.
 // Used both for offline WAV export and (stage 3) the SDL audio callback.

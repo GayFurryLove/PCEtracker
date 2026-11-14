@@ -9,7 +9,7 @@
 namespace pce {
 
 namespace {
-const uint32_t kFrameCycles = 119210; // 262 lines * 1365 master clocks / 3
+const uint32_t kFrameCycles = 119665; // 263 lines * 1365 master clocks / 3 (59.826 Hz)
 const uint32_t kTimerCycles = 1024;
 enum { FC = 0x01, FZ = 0x02, FI = 0x04, FD = 0x08, FB = 0x10, FT = 0x20, FV = 0x40, FN = 0x80 };
 uint32_t rd32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }

@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
   WavWriter wav;
   if (!wav.open(argv[2], rate, 16)) { printf("cannot write %s\n", argv[2]); return 1; }
 
-  const uint32_t frameCycles = 119210;
+  const uint32_t frameCycles = 119665; // 263 lines * 455
   const int frames = (int)(seconds * Psg::kClockHz / frameCycles);
   std::vector<HesMachine::PsgWrite> writes;
   std::vector<int16_t> pcm;

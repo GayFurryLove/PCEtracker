@@ -294,7 +294,7 @@ static void testRender(const char* demoPath) {
   while (!r.player().songLooped() && ticks < 5000) { r.renderTick(pcm); ++ticks; }
   CHECK(ticks == 768);
   double sec = pcm.size() / 2 / 44100.0;
-  CHECK(sec > 768 * 119210.0 / Psg::kClockHz - 0.01 && sec < 768 * 119210.0 / Psg::kClockHz + 0.01);
+  CHECK(sec > 768 * (double)kFrameClocks / Psg::kClockHz - 0.01 && sec < 768 * (double)kFrameClocks / Psg::kClockHz + 0.01);
   double e = 0;
   for (size_t i = 0; i < pcm.size(); ++i) e += (double)pcm[i] * pcm[i];
   CHECK(e / pcm.size() > 10000.0);

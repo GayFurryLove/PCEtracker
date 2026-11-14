@@ -19,9 +19,9 @@ using namespace pce;
 
 namespace {
 
-// NTSC frame: 262 lines * 1365 master clocks = 357630 master clocks (59.83 Hz).
-// The PSG (and the fast CPU clock) run at master/3, so one frame = 119210 PSG clocks.
-const uint32_t kFrameClocks = 119210;
+// NTSC frame: 263 lines * 1365 master clocks = 358995 master clocks (59.826 Hz).
+// The PSG (and the fast CPU clock) run at master/3, so one frame = 119665 PSG clocks.
+const uint32_t kFrameClocks = 119665;
 // HuC6280 timer: 7.16 MHz / 1024 per tick; reload 0 = 1 tick -> ~6.99 kHz.
 const uint32_t kTimerClocks = 1024;
 

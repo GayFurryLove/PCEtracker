@@ -27,7 +27,7 @@ public:
 
   HesMachine();
   bool load(const std::vector<uint8_t>& hes, std::string* err);
-  // Runs one video frame (119210 CPU cycles) and appends the PSG writes.
+  // Runs one video frame (119665 CPU cycles) and appends the PSG writes.
   bool runFrame(std::vector<PsgWrite>* out);
   const std::string& error() const { return error_; }
   uint32_t frame() const { return frame_; }

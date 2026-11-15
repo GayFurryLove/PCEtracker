@@ -664,8 +664,17 @@ void App::draw() {
   screen_.present();
 }
 
-// Startup logo: the mascot as text cells, in the tracker's three colours.
+// Startup logo: the mascot as text cells, in the tracker's three colours,
+// framed by the same orange bars as the tracker screen.
 void App::drawSplash() {
+  screen_.fill(0, 0, kCols, 1, C_ORANGE);
+  screen_.text(1, 0, "PCETRACKER " PCE_VERSION, C_BLACK);
+  const char* chip = "HUC6280 PSG";
+  screen_.text(kCols - 1 - (int)strlen(chip), 0, chip, C_BLACK);
+  screen_.fill(0, kRows - 1, kCols, 1, C_ORANGE);
+  const char* hint = "PRESS ANY KEY";
+  screen_.text((kCols - (int)strlen(hint)) / 2, kRows - 1, hint, C_BLACK);
+
   const int x0 = (kCols - kLogoCols) / 2, y0 = 3;
   for (int y = 0; y < kLogoRows; ++y) {
     const char* s = kLogo[y];
@@ -675,10 +684,10 @@ void App::drawSplash() {
       screen_.glyph(x0 + x, y0 + y, (unsigned char)s[x], c);
     }
   }
-  const char* title = "PCETRACKER";
-  const char* hint = "PRESS ANY KEY";
+  const char* title = "P C E T R A C K E R";
+  const char* sub = "PC ENGINE / TURBOGRAFX-16 MUSIC TRACKER";
   screen_.text((kCols - (int)strlen(title)) / 2, y0 + kLogoRows + 3, title, C_ORANGE);
-  screen_.text((kCols - (int)strlen(hint)) / 2, y0 + kLogoRows + 5, hint, C_DIM);
+  screen_.text((kCols - (int)strlen(sub)) / 2, y0 + kLogoRows + 5, sub, C_DIM);
 }
 
 void App::drawHeader() {

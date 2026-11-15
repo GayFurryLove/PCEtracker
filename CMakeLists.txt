@@ -4,7 +4,7 @@
 # 3.13 = Debian 10 (buster) era; keeps old antiX releases able to build.
 cmake_minimum_required(VERSION 3.13...3.31)
 # Version: bump on every stage/release and tag the commit vX.Y.Z (docs/VERSIONING.md).
-project(PCEtracker VERSION 0.8.1 LANGUAGES C CXX)
+project(PCEtracker VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

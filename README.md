@@ -1,23 +1,36 @@
-# PCEtracker
+<p align="center">
+  <img src="docs/splash.png" alt="PCEtracker — заставка с маскотом" width="1024">
+</p>
 
-Специализированный трекер **только для PC Engine / TurboGrafx-16** (HuC6280 PSG).
-Клавиатурный процесс в духе ProTracker, ориентация на реальные возможности чипа,
-экспорт в WAV и в родные форматы консоли (HES, ROM).
+<h1 align="center">PCEtracker</h1>
+
+<p align="center">
+  <b>Трекер только для PC Engine / TurboGrafx-16 (HuC6280 PSG)</b><br>
+  клавиатура в духе ProTracker · реальные возможности чипа · экспорт в WAV, HES и HuCard ROM
+</p>
+
+<p align="center">
+  <a href="docs/MANUAL.md">Руководство</a> ·
+  <a href="docs/EXPORT.md">Экспорт</a> ·
+  <a href="docs/INSTRUMENTS.md">Инструменты</a> ·
+  <a href="docs/ROADMAP.md">План</a> ·
+  версия 0.9.0 (<a href="docs/VERSIONING.md">правила</a>)
+</p>
 
 > Статус: **все 8 этапов плана выполнены.** Ядро звука HuC6280, движок трекера, окно трекера,
 > экран инструмента (волны, макросы, DDA-семплы из WAV), экспорт WAV, **HES** и **HuCard ROM**.
 > HES и ROM проверяются встроенной машиной 6280 при каждом экспорте и проверены в
 > **Mednafen 1.32.1**; на настоящей консоли — **ещё нет** ([docs/EXPORT.md](docs/EXPORT.md)).
->
-> **Руководство: [docs/MANUAL.md](docs/MANUAL.md).** Версия: 0.8.1 ([docs/VERSIONING.md](docs/VERSIONING.md)).
 
-![PCEtracker](docs/screenshot.png)
+![PCEtracker: экран паттернов](docs/screenshot.png)
 
 ## Запуск
 
 ```bash
 ./build/pcetracker songs/demo.pcet     # открыть песню (или новое имя — новая песня)
 ```
+
+При запуске показывается заставка с маскотом (любая клавиша закрывает, `--no-splash` — без неё).
 
 ENTER — играть/стоп, SPACE — режим записи, F9/F10 — паттерны/инструмент, F12 — все клавиши.
 Перетащите .wav на окно — получится DDA-семпл. Экран инструмента: [docs/INSTRUMENTS.md](docs/INSTRUMENTS.md). Ноты — две нижние/верхние

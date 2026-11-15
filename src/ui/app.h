@@ -55,6 +55,7 @@ private:
   void drawPattern(int top, int bottom);
   void drawStatus();
   void drawHelp();
+  void drawSplash();
   int runBenchmark();
 
   // Instrument screen (app_instrument.cpp)
@@ -82,6 +83,8 @@ private:
   std::string message_;
   Uint32 messageTime_;
   bool showHelp_;
+  bool splash_;          // startup logo: shown until a key, a click or the timeout
+  Uint32 splashStart_;
   bool quit_, quitArmed_;
   bool redraw_;
   bool followPlay_;

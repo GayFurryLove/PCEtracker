@@ -2,6 +2,7 @@
 // Copyright (C) 2026 PCEtracker contributors. GPL-2.0-or-later, see LICENSE.
 
 #include "ui/app.h"
+#include "ui/logo.h"
 #include "export/hes_export.h"
 #include "project/text_format.h"
 #include "version.h"
@@ -61,7 +62,7 @@ std::string hex2(int v) {
 
 App::App()
   : editor_(song_), renderer_(0), window_(0), sdlRenderer_(0), audioDev_(0), fifoHead_(0),
-    messageTime_(0), showHelp_(false), quit_(false), quitArmed_(false), redraw_(true),
+    messageTime_(0), showHelp_(false), splash_(false), splashStart_(0), quit_(false), quitArmed_(false), redraw_(true),
     followPlay_(true), jamCh_(-1), jamKey_(SDL_SCANCODE_UNKNOWN), playing_(false),
     playOrder_(0), playRow_(0), view_(VIEW_PATTERN), focus_(FOCUS_PARAMS), paramRow_(0),
     waveCursor_(0), macroKind_(0), macroCursor_(0), drag_(0), textEdit_(TEXT_NONE), emptyCell_(0) {
@@ -149,6 +150,8 @@ void App::fillAudio(int16_t* out, int frames) {
   fifoHead_ += need;
 }
 
+const Uint32 kSplashMs = 2500; // the logo closes by itself after this long
+
 int App::run(int argc, char** argv) {
   SDL_SetMainReady();
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS) != 0) {
@@ -158,15 +161,18 @@ int App::run(int argc, char** argv) {
   std::string cfgPath = Config::defaultPath();
   cfg_.load(cfgPath);
 
-  // Options: [song.pcet] [--screenshot out.bmp] [--edit] [--help-screen]
+  // Options: [song.pcet] [--screenshot out.bmp] [--edit] [--help-screen] [--splash] [--no-splash]
   const char* shot = 0;
   bool bench = false;
+  bool noSplash = false;
   std::vector<const char*> args;
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--edit")) editor_.editMode = true;
     else if (!strcmp(argv[i], "--help-screen")) showHelp_ = true;
     else if (!strcmp(argv[i], "--benchmark")) bench = true;
+    else if (!strcmp(argv[i], "--splash")) splash_ = true;       // with --screenshot: capture the logo
+    else if (!strcmp(argv[i], "--no-splash")) noSplash = true;
     else if (!strcmp(argv[i], "--instrument") && i + 1 < argc) { view_ = VIEW_INSTRUMENT; editor_.instrument = atoi(argv[++i]); }
     else args.push_back(argv[i]);
   }
@@ -214,6 +220,9 @@ int App::run(int argc, char** argv) {
     message(std::string("NO AUDIO: ") + SDL_GetError());
   }
 
+  splash_ = !noSplash;
+  splashStart_ = SDL_GetTicks();
+
   while (!quit_) {
     SDL_Event e;
     // Sleep until input or the next display refresh (~30 fps while playing).
@@ -242,6 +251,7 @@ int App::run(int argc, char** argv) {
         }
       } while (SDL_PollEvent(&e));
     }
+    if (splash_ && SDL_GetTicks() - splashStart_ > kSplashMs) { splash_ = false; redraw_ = true; }
 
     {
       Guard g(audioDev_);
@@ -439,6 +449,7 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
   redraw_ = true;
   if (!ctrl || (sc != SDL_SCANCODE_Q && sc != SDL_SCANCODE_O)) quitArmed_ = false; // any other key cancels "quit?"
 
+  if (splash_) { splash_ = false; return; } // any key closes the logo
   if (showHelp_) {
     if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_F12) showHelp_ = false;
     return;
@@ -596,6 +607,7 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
 
 void App::handleMouse(const SDL_Event& e) {
   redraw_ = true;
+  if (splash_) { if (e.type != SDL_MOUSEMOTION) splash_ = false; return; }
   Guard g(audioDev_);
   if (view_ == VIEW_INSTRUMENT && !showHelp_ && (e.type != SDL_MOUSEBUTTONDOWN || e.button.y / kCell >= kPatHeader)) {
     handleInstrumentMouse(e);
@@ -639,6 +651,7 @@ void App::handleMouse(const SDL_Event& e) {
 
 void App::draw() {
   screen_.clear();
+  if (splash_) { drawSplash(); screen_.present(); return; }
   drawHeader();
   drawOrders(kOrderX, kTopRow, kPanelRows);
   drawInstruments(kInstX, kTopRow, kPanelRows);
@@ -649,6 +662,23 @@ void App::draw() {
   drawStatus();
   if (showHelp_) drawHelp();
   screen_.present();
+}
+
+// Startup logo: the mascot as text cells, in the tracker's three colours.
+void App::drawSplash() {
+  const int x0 = (kCols - kLogoCols) / 2, y0 = 3;
+  for (int y = 0; y < kLogoRows; ++y) {
+    const char* s = kLogo[y];
+    for (int x = 0; s[x]; ++x) {
+      if (s[x] == ' ') continue;
+      Color c = s[x] == ':' ? C_DIM : s[x] == '=' ? C_ORANGE : C_WHITE;
+      screen_.glyph(x0 + x, y0 + y, (unsigned char)s[x], c);
+    }
+  }
+  const char* title = "PCETRACKER";
+  const char* hint = "PRESS ANY KEY";
+  screen_.text((kCols - (int)strlen(title)) / 2, y0 + kLogoRows + 3, title, C_ORANGE);
+  screen_.text((kCols - (int)strlen(hint)) / 2, y0 + kLogoRows + 5, hint, C_DIM);
 }
 
 void App::drawHeader() {

@@ -1,0 +1,126 @@
+"""Line-first ASCII converter: every character cell is matched by shape against
+real glyph bitmaps, so outlines become / \\ | _ ( ) instead of brightness noise.
+
+Usage: python mascot/ascii.py [image] [cols ...] [crop=l,t,r,b] [name=prefix]
+                              [font8] [header=path]
+  crop=   fractions of the figure's bounding box
+  font8   match against the tracker's own 8x8 font (square cells) instead of a
+          1:2 terminal font
+  header= also write the first size as a C++ header for the splash screen"""
+import os, re, sys
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+here = os.path.dirname(os.path.abspath(__file__))
+src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, 'ref.webp')
+args = sys.argv[2:]
+crop = next(([float(v) for v in s[5:].split(',')] for s in args if s.startswith('crop=')), [0, 0, 1, 1])
+name = next((s[5:] for s in args if s.startswith('name=')), 'ascii')
+header = next((s[7:] for s in args if s.startswith('header=')), None)
+font8 = 'font8' in args
+sizes = [int(v) for v in args if v.isdigit()] or [60, 80]
+
+CHARS = " .,'`-_|/\\()"   # stroke-shaped glyphs only: letters read as noise
+FILL, ORANGE = ':', '='
+GW, GH = (8, 8) if font8 else (8, 16)
+
+if font8:
+    txt = open(os.path.join(here, '..', 'third_party', 'font8x8', 'font8x8_basic.h')).read()
+    rows8 = re.findall(r'\{\s*((?:0x[0-9A-Fa-f]{2},?\s*){8})\}', txt)
+    FONT = [[int(v, 16) for v in re.findall(r'0x[0-9A-Fa-f]{2}', r)] for r in rows8]
+
+    def bitmap(ch):
+        return np.array([[(row >> x) & 1 for x in range(8)] for row in FONT[ord(ch)]], dtype=np.uint8)
+else:
+    big = ImageFont.truetype(r'C:\Windows\Fonts\consola.ttf', 28)
+
+    def bitmap(ch):
+        im = Image.new('L', (16, 32), 0)
+        ImageDraw.Draw(im).text((0, 1), ch, fill=255, font=big)
+        return (np.asarray(im.resize((GW, GH), Image.BOX)) > 96).astype(np.uint8)
+
+
+def glyph(ch):
+    im = Image.fromarray(bitmap(ch) * 255).filter(ImageFilter.GaussianBlur(0.6))
+    return np.asarray(im, dtype=np.float32).ravel() / 255
+
+
+G = np.stack([glyph(c) for c in CHARS])
+G2 = (G ** 2).sum(1)
+
+a = np.asarray(Image.open(src).convert('RGB'), dtype=np.float32)
+r, g, b = a[..., 0], a[..., 1], a[..., 2]
+lum = a @ np.array([.299, .587, .114], dtype=np.float32)
+orange = (r > 190) & (g > 90) & (g < 190) & (b < 120)
+dark = (lum < 110) & ~orange
+
+# split dark ink into thin lines and solid fills (morphological opening)
+dm = Image.fromarray((dark * 255).astype('uint8'))
+interior = np.asarray(dm.filter(ImageFilter.MinFilter(15)).filter(ImageFilter.MaxFilter(9))) > 127
+line = dark & ~interior
+
+ys, xs = np.where(dark | orange)
+pad = 12
+x0, x1 = max(0, xs.min() - pad), min(a.shape[1], xs.max() + pad)
+y0, y1 = max(0, ys.min() - pad), min(a.shape[0], ys.max() + pad)
+bw, bh = x1 - x0, y1 - y0
+x0, x1 = int(x0 + crop[0] * bw), int(x0 + crop[2] * bw)
+y0, y1 = int(y0 + crop[1] * bh), int(y0 + crop[3] * bh)
+
+
+def grid(mask, cols, rows, res=Image.LANCZOS):
+    im = Image.fromarray((mask[y0:y1, x0:x1] * 255).astype('uint8'))
+    t = np.asarray(im.resize((cols * GW, rows * GH), res), dtype=np.float32) / 255
+    return t.reshape(rows, GH, cols, GW).transpose(0, 2, 1, 3).reshape(rows * cols, GH * GW)
+
+
+def convert(cols):
+    rows = round(cols * (y1 - y0) / (x1 - x0) * GW / GH)
+    cl = np.clip(grid(line, cols, rows) * 1.7, 0, 1)
+    ci = grid(interior, cols, rows, Image.BOX).mean(1)
+    co = grid(orange, cols, rows, Image.BOX).mean(1)
+    idx = ((cl ** 2).sum(1)[:, None] - 2 * cl @ G.T + G2[None]).argmin(1)
+    out = []
+    for i in range(rows * cols):
+        strong = cl[i].max() > 0.35 and cl[i].mean() > 0.04
+        if strong and CHARS[idx[i]] != ' ':
+            ch = CHARS[idx[i]]
+        elif ci[i] > 0.5:
+            ch = FILL
+        elif co[i] > 0.45:
+            ch = ORANGE
+        else:
+            ch = ' '
+        out.append(ch)
+    return [''.join(out[r * cols:(r + 1) * cols]).rstrip() for r in range(rows)]
+
+
+def preview(lines, cols):
+    """Draw the text with the same glyph bitmaps, in the tracker's colours."""
+    tone = {FILL: (112, 112, 112), ORANGE: (255, 122, 0)}
+    im = np.full((len(lines) * GH + 16, cols * GW + 16, 3), (0, 0, 0), dtype=np.uint8)
+    for n, s in enumerate(lines):
+        for c, ch in enumerate(s):
+            if ch != ' ':
+                cell = im[8 + n * GH:8 + (n + 1) * GH, 8 + c * GW:8 + (c + 1) * GW]
+                cell[bitmap(ch) > 0] = tone.get(ch, (255, 255, 255))
+    return Image.fromarray(im)
+
+
+for n, cols in enumerate(sizes):
+    lines = convert(cols)
+    with open(os.path.join(here, f'{name}_{cols}.txt'), 'w', encoding='ascii') as f:
+        f.write('\n'.join(lines) + '\n')
+    preview(lines, cols).save(os.path.join(here, f'{name}_{cols}_preview.png'))
+    print(cols, 'x', len(lines))
+    if header and n == 0:
+        with open(header, 'w', encoding='ascii', newline='\n') as f:
+            f.write('// PCEtracker - startup logo. Generated by mascot/ascii.py, do not edit by hand.\n'
+                    '// Copyright (C) 2026 PCEtracker contributors. GPL-2.0-or-later, see LICENSE.\n'
+                    "//\n// ':' cells are the dark fur, '=' cells the orange markings, the rest is outline.\n\n"
+                    '#ifndef PCETRACKER_LOGO_H\n#define PCETRACKER_LOGO_H\n\nnamespace pce {\n\n'
+                    f'const int kLogoCols = {cols}, kLogoRows = {len(lines)};\n'
+                    'static const char* const kLogo[kLogoRows] = {\n')
+            for s in lines:
+                f.write('  "' + s.replace('\\', '\\\\').replace('"', '\\"') + '",\n')
+            f.write('};\n\n} // namespace pce\n\n#endif\n')

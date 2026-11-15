@@ -192,7 +192,7 @@ int App::run(int argc, char** argv) {
       message("New song: " + path_);
     }
   } else {
-    path_ = "untitled.pcet";
+    path_ = cfg_.songPath("untitled.pcet");
     message("New song. F12 = keys help");
   }
   editor_.setOrder(0);

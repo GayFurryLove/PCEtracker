@@ -17,7 +17,11 @@ struct Config {
   int audioRate;      // output sample rate
   int audioBuffer;    // samples per audio callback (bigger = safer on slow CPUs)
   bool revisionA;     // HuC6280A (true) or HuC6280 (false)
+  std::string songDir;// folder for new songs and relative Open/Save As names ("" = current dir)
   Config();
+
+  // `name` as is if it is absolute or songDir is empty, else songDir/name.
+  std::string songPath(const std::string& name) const;
 
   // Loads `path`; writes a commented default file if it does not exist.
   void load(const std::string& path);

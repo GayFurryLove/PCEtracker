@@ -21,6 +21,16 @@ std::string Config::defaultPath() {
   return p + "pcetracker.cfg";
 }
 
+static bool isAbsolute(const std::string& p) {
+  return (!p.empty() && (p[0] == '/' || p[0] == '\\')) || (p.size() >= 2 && p[1] == ':');
+}
+
+std::string Config::songPath(const std::string& name) const {
+  if (songDir.empty() || isAbsolute(name)) return name;
+  const char last = songDir[songDir.size() - 1];
+  return songDir + (last == '/' || last == '\\' ? "" : "/") + name;
+}
+
 static const char* kDefaultText =
   "# PCEtracker configuration\n"
   "# Window scale (integer): 1 = 1024x600, 2 = 2048x1200 ...\n"
@@ -37,7 +47,10 @@ static const char* kDefaultText =
   "audio_rate=44100\n"
   "audio_buffer=1024\n"
   "# Chip revision: 6280a (later consoles, TurboGrafx-16) or 6280 (early PC Engine)\n"
-  "revision=6280a\n";
+  "revision=6280a\n"
+  "# Folder for new songs; relative names typed in Open / Save As are taken from it.\n"
+  "# Empty = the folder the tracker was started from. Example: song_dir=D:\\Music\\pce\n"
+  "song_dir=\n";
 
 void Config::load(const std::string& path) {
   FILE* f = fopen(path.c_str(), "rb");
@@ -46,7 +59,7 @@ void Config::load(const std::string& path) {
     if (f) { fputs(kDefaultText, f); fclose(f); }
     return;
   }
-  char line[256];
+  char line[1024];
   while (fgets(line, sizeof line, f)) {
     char* eq = strchr(line, '=');
     if (line[0] == '#' || !eq) continue;
@@ -62,6 +75,13 @@ void Config::load(const std::string& path) {
     else if (!strcmp(key, "audio_rate")) audioRate = (v >= 8000 && v <= 192000) ? v : 44100;
     else if (!strcmp(key, "audio_buffer")) audioBuffer = (v >= 256 && v <= 16384) ? v : 1024;
     else if (!strcmp(key, "revision")) revisionA = strncmp(val, "6280a", 5) == 0;
+    else if (!strcmp(key, "song_dir")) {
+      // Keep spaces inside the path, drop the line end, surrounding blanks and quotes.
+      std::string s(val);
+      while (!s.empty() && strchr(" \t\r\n\"", s[s.size() - 1])) s.erase(s.size() - 1);
+      size_t b = s.find_first_not_of(" \t\"");
+      songDir = b == std::string::npos ? std::string() : s.substr(b);
+    }
   }
   fclose(f);
 }

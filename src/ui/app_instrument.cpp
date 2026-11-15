@@ -84,8 +84,9 @@ bool App::handleTextKey(const SDL_KeyboardEvent& k) {
         const int what = textEdit_;
         textEdit_ = TEXT_NONE;
         SDL_StopTextInput();
-        if (what == TEXT_OPEN) { openSong(textBuf_); }
-        else { path_ = textBuf_; save(); }
+        const std::string p = cfg_.songPath(textBuf_);
+        if (what == TEXT_OPEN) { openSong(p); }
+        else { path_ = p; save(); }
         return true;
       }
       // fall through

@@ -4,6 +4,7 @@
 #include "audio/song_render.h"
 #include "export/hes_export.h"
 #include "project/text_format.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +13,8 @@
 using namespace pce;
 
 static void usage() {
-  printf("usage: pcet_render song.pcet out.wav [options]\n"
+  printf("pcet_render (PCEtracker %s)\n"
+         "usage: pcet_render song.pcet out.wav [options]\n"
          "  --rate N        sample rate, 8000..192000 (default 44100)\n"
          "  --bits 16|24    sample format (default 16)\n"
          "  --rev 6280|6280a  chip revision (default 6280a)\n"
@@ -21,7 +23,7 @@ static void usage() {
          "  --tail SEC      silence after the end (default 1)\n"
          "  --resave FILE   also write the song back in canonical text form\n"
          "  --hes FILE      also export a HES file (PC Engine sound format)\n"
-         "  --rom FILE      also export a HuCard ROM (.pce) that plays the song\n");
+         "  --rom FILE      also export a HuCard ROM (.pce) that plays the song\n", PCE_VERSION);
 }
 
 int main(int argc, char** argv) {

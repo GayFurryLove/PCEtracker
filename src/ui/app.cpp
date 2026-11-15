@@ -4,6 +4,7 @@
 #include "ui/app.h"
 #include "export/hes_export.h"
 #include "project/text_format.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,7 +91,7 @@ bool App::initVideo() {
   bool tooBig = known && (w > usable.w || h > usable.h - 32); // leave room for a title bar
   bool full = cfg_.fullscreen == 1 || (cfg_.fullscreen == 2 && tooBig);
   Uint32 flags = SDL_WINDOW_RESIZABLE | (full ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-  window_ = SDL_CreateWindow("PCEtracker", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
+  window_ = SDL_CreateWindow("PCEtracker " PCE_VERSION, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags);
   if (!window_) return false;
   Uint32 rflags = cfg_.softwareRender ? SDL_RENDERER_SOFTWARE : 0;
   if (cfg_.vsync && !cfg_.softwareRender) rflags |= SDL_RENDERER_PRESENTVSYNC;

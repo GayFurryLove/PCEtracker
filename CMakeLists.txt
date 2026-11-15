@@ -3,7 +3,8 @@
 
 # 3.13 = Debian 10 (buster) era; keeps old antiX releases able to build.
 cmake_minimum_required(VERSION 3.13...3.31)
-project(PCEtracker VERSION 0.1.0 LANGUAGES C CXX)
+# Version: bump on every stage/release and tag the commit vX.Y.Z (docs/VERSIONING.md).
+project(PCEtracker VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +25,11 @@ if(MSVC)
 else()
   add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
+
+# --- version.h (PCE_VERSION) ----------------------------------------------
+configure_file(cmake/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
+add_library(pce_version INTERFACE)
+target_include_directories(pce_version INTERFACE ${CMAKE_BINARY_DIR}/generated)
 
 # --- third party ----------------------------------------------------------
 add_library(blip_buf STATIC third_party/blip_buf/blip_buf.c)
@@ -73,7 +79,7 @@ if(PCE_BUILD_TOOLS)
   add_executable(psg_demo tools/psg_demo.cpp)
   target_link_libraries(psg_demo PRIVATE pce_psg pce_wav)
   add_executable(pcet_render tools/pcet_render.cpp)
-  target_link_libraries(pcet_render PRIVATE pce_export pce_project)
+  target_link_libraries(pcet_render PRIVATE pce_export pce_project pce_version)
 endif()
 
 # --- module 9: user interface (SDL2) ----------------------------------------
@@ -106,7 +112,7 @@ if(PCE_BUILD_APP)
       src/ui/config.cpp
       src/ui/screen.cpp)
     target_include_directories(pcetracker PRIVATE src third_party/font8x8 ${PCE_SDL2_INCLUDES})
-    target_link_libraries(pcetracker PRIVATE pce_export pce_project ${PCE_SDL2_LIBS})
+    target_link_libraries(pcetracker PRIVATE pce_export pce_project pce_version ${PCE_SDL2_LIBS})
     if(WIN32 AND TARGET SDL2::SDL2)
       add_custom_command(TARGET pcetracker POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:pcetracker>)

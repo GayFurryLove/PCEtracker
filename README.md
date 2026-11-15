@@ -9,7 +9,7 @@
 > HES и ROM проверяются встроенной машиной 6280 при каждом экспорте и проверены в
 > **Mednafen 1.32.1**; на настоящей консоли — **ещё нет** ([docs/EXPORT.md](docs/EXPORT.md)).
 >
-> **Руководство: [docs/MANUAL.md](docs/MANUAL.md).**
+> **Руководство: [docs/MANUAL.md](docs/MANUAL.md).** Версия: 0.8.1 ([docs/VERSIONING.md](docs/VERSIONING.md)).
 
 ![PCEtracker](docs/screenshot.png)
 

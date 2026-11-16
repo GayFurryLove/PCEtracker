@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include "util/file_utf8.h"
 
 namespace pce {
 
@@ -61,7 +62,7 @@ void convertToDda(const float* mono, size_t count, double rate, Sample* out) {
 }
 
 bool importWavSample(const char* path, Sample* out, std::string* error) {
-  FILE* f = fopen(path, "rb");
+  FILE* f = openFile(path, "rb");
   if (!f) { *error = std::string("cannot open ") + path; return false; }
   std::vector<unsigned char> buf;
   unsigned char tmp[65536];

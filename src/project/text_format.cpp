@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sstream>
+#include "util/file_utf8.h"
 
 namespace pce {
 
@@ -127,7 +128,9 @@ std::string saveSongText(const Song& song) {
   o << "PCETRACKER " << kFormatVersion << "\n";
   o << "title " << quote(song.title) << "\n";
   o << "author " << quote(song.author) << "\n";
-  o << "speed " << song.speed << "\n\n";
+  o << "speed " << song.speed << "\n";
+  if (song.tempo != kDefaultTempo) o << "tempo " << song.tempo << "\n";
+  o << "\n";
 
   for (size_t w = 0; w < song.waves.size(); ++w) {
     o << "wave " << hex2((int)w) << " ";
@@ -157,6 +160,7 @@ std::string saveSongText(const Song& song) {
       const Macro& m = in.macros[k];
       if (m.empty()) continue;
       o << "  macro " << kMacroNames[k];
+      if (m.speed != 1) o << " speed " << m.speed;
       if (m.loop >= 0) o << " loop " << m.loop;
       if (m.release >= 0) o << " release " << m.release;
       o << " :";
@@ -259,6 +263,7 @@ bool loadSongText(const std::string& text, Song* out, std::string* error) {
           if (i + 1 >= t.size() || !toInt(t[i + 1], &v)) FAIL("bad macro option");
           if (t[i] == "loop") m.loop = v;
           else if (t[i] == "release") m.release = v;
+          else if (t[i] == "speed" && v >= 1 && v <= kMaxMacroSpeed) m.speed = v;
           else FAIL("unknown macro option '" << t[i] << "'");
         }
         if (i >= t.size()) FAIL("macro values must follow ':'");
@@ -281,6 +286,7 @@ bool loadSongText(const std::string& text, Song* out, std::string* error) {
     if (t[0] == "title" && t.size() >= 2) { s.title = t[1]; continue; }
     if (t[0] == "author" && t.size() >= 2) { s.author = t[1]; continue; }
     if (t[0] == "speed" && t.size() == 2 && toInt(t[1], &v) && v >= 1 && v <= 31) { s.speed = v; continue; }
+    if (t[0] == "tempo" && t.size() == 2 && toInt(t[1], &v) && v >= kMinTempo && v <= kMaxTempo) { s.tempo = v; continue; }
     if (t[0] == "wave" && t.size() == 3 && parseHex2(t[1], 0, &v) && v < kMaxWaves) {
       if (t[2].size() != (size_t)kWaveLength * 2) FAIL("wave needs 32 two-digit hex samples");
       Wave w;
@@ -360,7 +366,7 @@ bool loadSongText(const std::string& text, Song* out, std::string* error) {
 }
 
 bool loadSongFile(const char* path, Song* song, std::string* error) {
-  FILE* f = fopen(path, "rb");
+  FILE* f = openFile(path, "rb");
   if (!f) { *error = std::string("cannot open ") + path; return false; }
   std::string text;
   char buf[4096];
@@ -371,7 +377,7 @@ bool loadSongFile(const char* path, Song* song, std::string* error) {
 }
 
 bool saveSongFile(const char* path, const Song& song, std::string* error) {
-  FILE* f = fopen(path, "wb");
+  FILE* f = openFile(path, "wb");
   if (!f) { *error = std::string("cannot write ") + path; return false; }
   std::string text = saveSongText(song);
   bool ok = fwrite(text.data(), 1, text.size(), f) == text.size();

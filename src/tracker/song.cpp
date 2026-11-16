@@ -33,7 +33,7 @@ Wave::Wave() {
 
 bool Wave::operator==(const Wave& o) const { return memcmp(data, o.data, sizeof data) == 0; }
 
-Song::Song() : speed(6) {
+Song::Song() : speed(6), tempo(kDefaultTempo) {
   orders.push_back(0);
   patterns.push_back(Pattern(64));
   instruments.push_back(Instrument());

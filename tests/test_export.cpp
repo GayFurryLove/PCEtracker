@@ -147,6 +147,31 @@ static void testOrderJumpLoop() {
   CHECK(st.framesIntro == 16 * 3 && st.framesLoop == 8 * 3);
 }
 
+static void testSongStops() {
+  // F00 ends the song: the stream stops in silence and never loops; also with
+  // a persistent arpeggio, a stretched tempo and a DDA sample running into the stop.
+  Song s;
+  s.speed = 3;
+  Sample smp;
+  for (int i = 0; i < 3000; ++i) smp.data.push_back((uint8_t)(i % 32));
+  s.samples.push_back(smp);
+  Instrument dda;
+  dda.sample = 0;
+  s.instruments.push_back(dda);
+  s.pattern(0).resize(16);
+  s.pattern(0).at(0, 0) = cellOf(45, 0, '0', 0x37);
+  s.pattern(0).at(0, 0).fx[1] = Effect('E', 2);
+  s.pattern(0).at(0, 1) = cellOf(36, 1, 'F', 0x60);
+  s.pattern(0).at(12, 0).fx[0] = Effect('F', 0x00);
+  ExportStats st;
+  CHECK(exportAndVerify(s, "song stops", &st));
+  CHECK(st.ends && st.framesLoop == 1);
+  std::vector<uint8_t> rom;
+  std::string err;
+  VerifyReport vr;
+  CHECK(exportRom(s, &rom, &st, &err) && verifyRom(s, rom, 0, &vr));
+}
+
 static void testRom(const char* path) {
   Song s;
   std::string err;
@@ -187,6 +212,8 @@ int main(int argc, char** argv) {
   testStress();
   printf("hucard rom\n");
   testRom(demo);
+  printf("song stops (F00)\n");
+  testSongStops();
   printf("order jump loop\n");
   testOrderJumpLoop();
   printf("%d checks, %d failed\n", g_checks, g_failed);

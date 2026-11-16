@@ -2,6 +2,7 @@
 // Copyright (C) 2026 PCEtracker contributors. GPL-2.0-or-later, see LICENSE.
 
 #include "wav_writer.h"
+#include "util/file_utf8.h"
 
 namespace pce {
 
@@ -17,7 +18,7 @@ WavWriter::~WavWriter() { close(); }
 bool WavWriter::open(const char* path, int sampleRate, int bits) {
   close();
   if (bits != 16 && bits != 24) return false;
-  file_ = fopen(path, "wb");
+  file_ = openFile(path, "wb");
   if (!file_) return false;
   sampleRate_ = sampleRate;
   bits_ = bits;

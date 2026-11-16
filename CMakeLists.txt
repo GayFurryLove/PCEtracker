@@ -4,7 +4,7 @@
 # 3.13 = Debian 10 (buster) era; keeps old antiX releases able to build.
 cmake_minimum_required(VERSION 3.13...3.31)
 # Version: bump on every stage/release and tag the commit vX.Y.Z (docs/VERSIONING.md).
-project(PCEtracker VERSION 0.9.0 LANGUAGES C CXX)
+project(PCEtracker VERSION 0.10.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -109,6 +109,10 @@ if(PCE_BUILD_APP)
       src/main.cpp
       src/ui/app.cpp
       src/ui/app_instrument.cpp
+      src/ui/app_files.cpp
+      src/ui/app_orders.cpp
+      src/ui/app_help.cpp
+      src/ui/fs.cpp
       src/ui/config.cpp
       src/ui/screen.cpp)
     target_include_directories(pcetracker PRIVATE src third_party/font8x8 ${PCE_SDL2_INCLUDES})

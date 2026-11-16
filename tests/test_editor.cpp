@@ -52,6 +52,59 @@ static void testHexAndEffects() {
   e.setCursor(0, 1, COL_FX1_LO);
   e.clearAtCursor();
   CHECK(s.patterns[0].at(0, 1).fx[0].cmd == 0);
+
+  // Typing "F06" in the command column: letter, then both digits on the SAME row,
+  // then the cursor is back in the command column one step down.
+  e.editStep = 1;
+  e.setCursor(4, 2, COL_FX1_CMD);
+  e.enterEffectCommand('F');
+  CHECK(e.row() == 4 && e.column() == COL_FX1_HI);
+  e.enterHexDigit(0);
+  e.enterHexDigit(6);
+  CHECK(s.patterns[0].at(4, 2).fx[0] == Effect('F', 0x06));
+  CHECK(s.patterns[0].at(5, 2).fx[0].cmd == 0);
+  CHECK(e.row() == 5 && e.column() == COL_FX1_CMD);
+  e.setCursor(4, 2, COL_FX2_CMD);
+  e.enterEffectCommand('W');
+  e.enterHexDigit(0);
+  e.enterHexDigit(2);
+  CHECK(s.patterns[0].at(4, 2).fx[1] == Effect('W', 0x02) && e.column() == COL_FX2_CMD);
+
+  // DEL clears only the field under the cursor.
+  e.setCursor(6, 3, COL_NOTE);
+  e.enterNote(40);
+  s.patterns[0].at(6, 3).volume = 0x10;
+  e.setCursor(6, 3, COL_NOTE);
+  e.clearAtCursor();
+  CHECK(s.patterns[0].at(6, 3).note == NOTE_NONE && s.patterns[0].at(6, 3).instrument == 0 &&
+        s.patterns[0].at(6, 3).volume == 0x10);
+  e.setCursor(6, 3, COL_INST_LO);
+  e.clearAtCursor();
+  CHECK(s.patterns[0].at(6, 3).instrument == INST_NONE && s.patterns[0].at(6, 3).volume == 0x10);
+  // ... and a marked block entirely.
+  e.setCursor(4, 2, COL_NOTE);
+  e.startSelection();
+  e.setCursor(6, 3, COL_NOTE);
+  e.extendSelection();
+  e.clearAtCursor();
+  CHECK(s.patterns[0].at(4, 2).empty() && s.patterns[0].at(6, 3).empty() && !e.hasSelection());
+}
+
+static void testOrderScreen() {
+  Song s;
+  Editor e(s);
+  // Arranging works without edit mode.
+  e.setOrderPattern(3);
+  CHECK(s.orders.size() == 1 && s.orders[0] == 3 && s.patterns.size() >= 4);
+  e.insertOrderPattern(1);
+  e.insertOrderPattern(2);
+  CHECK(s.orders.size() == 3 && s.orders[1] == 1 && s.orders[2] == 2 && e.order() == 2);
+  e.moveOrder(-1);
+  CHECK(s.orders[1] == 2 && s.orders[2] == 1 && e.order() == 1);
+  e.moveOrder(-5); // out of range: nothing
+  CHECK(s.orders[0] == 3 && e.order() == 1);
+  CHECK(e.patternUseCount(2) == 1 && e.patternUseCount(7) == 0);
+  CHECK(e.undo() && s.orders[1] == 1 && s.orders[2] == 2);
 }
 
 static void testRowsAndBlocks() {
@@ -222,6 +275,7 @@ int main() {
     { "rows and blocks", testRowsAndBlocks },
     { "undo/redo", testUndoRedo },
     { "orders", testOrders },
+    { "order screen", testOrderScreen },
     { "cursor wrap", testCursorWrap },
     { "instrument editing", testInstrumentEditing },
   };

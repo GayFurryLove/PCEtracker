@@ -67,10 +67,12 @@ void Player::resetState() {
     ch.inst = 0;
     ch.volume = kVolumeMax;
     ch.period = notePeriod(45);
-    for (int k = 0; k < MACRO_COUNT; ++k) { ch.macro[k].pos = 0; ch.macro[k].done = false; }
+    for (int k = 0; k < MACRO_COUNT; ++k) { ch.macro[k].pos = 0; ch.macro[k].wait = 0; ch.macro[k].done = false; }
     ch.released = false;
     ch.pitchAccum = 0;
     ch.arp = ch.volSlide = ch.portaUp = ch.portaDown = 0;
+    ch.arpSpeed = 1;
+    ch.arpStep = ch.arpTimer = 0;
     ch.tonePorta = ch.vibratoOn = false;
     ch.cutAt = 0xFF;
     ch.retrigEvery = 0;
@@ -102,6 +104,10 @@ void Player::resetState() {
   looped_ = false;
   order_ = row_ = tick_ = 0;
   speed_ = clampi(song_.speed, 1, 31);
+  tempo_ = clampi(song_.tempo, kMinTempo, kMaxTempo);
+  tempoCarry_ = 0;
+  rowTicks_ = speed_;
+  halt_ = ended_ = false;
   loopPattern_ = 0;
   breakRow_ = jumpOrder_ = -1;
   ticks_ = 0;
@@ -155,9 +161,10 @@ void Player::trigger(int c, uint8_t note) {
   ch.active = true;
   ch.used = true;
   ch.released = false;
-  for (int k = 0; k < MACRO_COUNT; ++k) { ch.macro[k].pos = 0; ch.macro[k].done = false; }
+  for (int k = 0; k < MACRO_COUNT; ++k) { ch.macro[k].pos = 0; ch.macro[k].wait = 0; ch.macro[k].done = false; }
   ch.pitchAccum = 0;
   ch.vibPos = 0;
+  ch.arpStep = ch.arpTimer = 0; // every note starts its chord on the base note
   ch.period = notePeriod(note);
   ch.tonePortaTarget = ch.period;
   ch.ddaSample = -1;
@@ -179,10 +186,11 @@ void Player::trigger(int c, uint8_t note) {
 
 void Player::processRow(int c, const Cell& cell) {
   Channel& ch = ch_[c];
-  ch.arp = ch.volSlide = ch.portaUp = ch.portaDown = 0;
+  ch.volSlide = ch.portaUp = ch.portaDown = 0;   // these last one row; 0xy stays until 000
   ch.tonePorta = ch.vibratoOn = false;
   ch.cutAt = 0xFF;
   ch.retrigEvery = 0;
+  int waveFx = -1;
 
   if (cell.instrument != INST_NONE && cell.instrument < song_.instruments.size()) {
     ch.inst = cell.instrument;
@@ -206,14 +214,19 @@ void Player::processRow(int c, const Cell& cell) {
       case 'B': jumpOrder_ = p; break;
       case 'C': ch.cutAt = p; break;
       case 'D': breakRow_ = p; break;
-      case 'F': if (p >= 1 && p <= 31) speed_ = p; break;
+      case 'E': ch.arpSpeed = p ? p : 1; break;
+      case 'F':
+        if (p == 0x00 || p == 0xFF) halt_ = true;            // stop the song
+        else if (p <= 0x1F) speed_ = p;                      // ticks per row
+        else tempo_ = clampi(p, kMinTempo, kMaxTempo);       // tempo, 150 = normal
+        break;
       case 'G': mainVol_ = p; break;
       case 'L': lfoCtrl_ = p & 0x83; break;
       case 'M': lfoFreq_ = p; break;
       case 'N': if (c >= 4) ch.noise = p > 32 ? 32 : p; break;
       case 'P': ch.detune = (int)p - 0x80; break;
       case 'R': ch.retrigEvery = p; break;
-      case 'W': if (p < song_.waves.size()) ch.wave = p; break;
+      case 'W': if (p < song_.waves.size()) waveFx = p; break;
       default: break; // unknown commands are kept in the song but do nothing
     }
   }
@@ -226,7 +239,11 @@ void Player::processRow(int c, const Cell& cell) {
       for (int k = 0; k < MACRO_COUNT; ++k) {
         const Macro& m = in.macros[k];
         if (m.release >= 0 && m.release + 1 < (int)m.values.size()) {
-          if (ch.macro[k].pos <= m.release) { ch.macro[k].pos = m.release + 1; ch.macro[k].done = false; }
+          if (ch.macro[k].pos <= m.release) {
+            ch.macro[k].pos = m.release + 1;
+            ch.macro[k].wait = 0;
+            ch.macro[k].done = false;
+          }
           if (k == MACRO_VOLUME) hasRelease = true;
         }
       }
@@ -241,6 +258,8 @@ void Player::processRow(int c, const Cell& cell) {
     }
   }
 
+  // After the note: a new note loads the instrument's wave, Wxx on the same row overrides it.
+  if (waveFx >= 0) ch.wave = waveFx;
   if (cell.volume != VOL_NONE) ch.volume = clampi(cell.volume, 0, kVolumeMax);
 }
 
@@ -286,6 +305,10 @@ void Player::advanceMacros(int c) {
     const Macro& m = in.macros[k];
     MacroPos& mp = ch.macro[k];
     if (m.empty() || mp.done) continue;
+    // Each step lasts `speed` ticks (e.g. a wave sequence: how long each wave sounds).
+    const int spd = clampi(m.speed, 1, kMaxMacroSpeed);
+    if (++mp.wait < spd) continue;
+    mp.wait = 0;
     int next = mp.pos + 1;
     if (!ch.released && m.release >= 0 && mp.pos >= m.release) {
       // Sustain until key-off: loop inside the sustain part, or hold at the release point.
@@ -307,10 +330,13 @@ void Player::compute(int c) {
 
   // Pitch: note + arpeggio (effect and macro) expressed as a period offset,
   // then slides, pitch macro, vibrato and detune - all in period units.
+  // 0xy cycles note, +x, +y (0x0: note, +x); each step lasts arpSpeed ticks (Exx).
   int arpOff = 0;
   if (ch.arp) {
-    int phase = tick_ % 3;
-    arpOff = phase == 1 ? (ch.arp >> 4) : phase == 2 ? (ch.arp & 15) : 0;
+    const int x = ch.arp >> 4, y = ch.arp & 15, steps = y ? 3 : 2;
+    if (ch.arpStep >= steps) ch.arpStep = 0;
+    arpOff = ch.arpStep == 1 ? x : ch.arpStep == 2 ? y : 0;
+    if (++ch.arpTimer >= ch.arpSpeed) { ch.arpTimer = 0; ch.arpStep = (ch.arpStep + 1) % steps; }
   }
   int n = clampi((int)ch.note + arpOff + macroValue(c, MACRO_ARP, 0), 0, kNoteCount - 1);
   ch.pitchAccum = clampi(ch.pitchAccum + macroValue(c, MACRO_PITCH, 0), -4095, 4095);
@@ -496,6 +522,20 @@ bool Player::tick(RegisterSink& out) {
     const Pattern& p = pi < (int)song_.patterns.size() ? song_.patterns[pi] : emptyPattern();
     int r = row_ < p.rows ? row_ : 0;
     for (int c = 0; c < kChannels; ++c) processRow(c, p.at(r, c));
+    if (halt_) {
+      // F00 / FFF: the song ends here, all channels fall silent at once.
+      for (int c = 0; c < kChannels; ++c) { ch_[c].active = false; compute(c); }
+      emit(out);
+      ++ticks_;
+      playing_ = halt_ = false;
+      ended_ = true;
+      return true;
+    }
+    // Row length: speed ticks, stretched by the tempo (150 = exactly `speed`).
+    const int num = speed_ * kDefaultTempo + tempoCarry_;
+    rowTicks_ = num / tempo_;
+    tempoCarry_ = num - rowTicks_ * tempo_;
+    if (rowTicks_ < 1) { rowTicks_ = 1; tempoCarry_ = 0; }
   }
   for (int c = 0; c < kChannels; ++c) {
     tickEffects(c);
@@ -505,7 +545,7 @@ bool Player::tick(RegisterSink& out) {
   emit(out);
 
   ++ticks_;
-  if (++tick_ >= speed_) {
+  if (++tick_ >= rowTicks_) {
     tick_ = 0;
     advanceRow();
   }

@@ -56,11 +56,12 @@ bool renderSongToWav(const Song& song, const RenderOptions& opt, const char* pat
   // A pattern renders once; a song renders once plus `loops` extra passes.
   const int maxPasses = opt.pattern >= 0 ? 0 : opt.loops;
 
-  while (p.ticksPlayed() < maxTicks) {
+  while (p.ticksPlayed() < maxTicks && p.playing()) {
     buf.clear();
     r.renderTick(buf);
     wav.write(buf.empty() ? 0 : &buf[0], buf.size() / 2);
     frames += buf.size() / 2;
+    if (p.songEnded()) break; // F00 / FFF: the song stops here, no further passes
     if (p.songLooped()) {
       p.clearLooped();
       if (++passes > maxPasses) break;

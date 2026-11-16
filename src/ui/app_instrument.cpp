@@ -46,22 +46,17 @@ struct Guard {
 void App::startTextEdit(int what) {
   textEdit_ = what;
   textBuf_ = what == TEXT_INST_NAME ? editor_.currentInstrument().name
-           : what == TEXT_SONG_TITLE ? song_.title : path_;
+           : song_.title;
   SDL_StartTextInput();
   if (what == TEXT_INST_NAME) message("Instrument name: type, ENTER = ok, ESC = cancel");
-  else if (what == TEXT_SONG_TITLE) message("Song title: type, ENTER = ok, ESC = cancel");
-  else redraw_ = true;
+  else message("Song title (also names a new song's file): type, ENTER = ok, ESC = cancel");
 }
 
 void App::handleTextInput(const char* text) {
   Guard g(audioDev_);
   for (const char* p = text; *p; ++p) {
     unsigned char c = (unsigned char)*p;
-    const bool path = textEdit_ == TEXT_OPEN || textEdit_ == TEXT_SAVE_AS;
-    if (path) {
-      // File names may contain any characters (shown as '?' by the ASCII font).
-      if (c >= 32 && textBuf_.size() < 400) textBuf_ += (char)c;
-    } else if (c >= 32 && c < 127 && c != '"' && textBuf_.size() < (textEdit_ == TEXT_INST_NAME ? 27u : 40u)) {
+    if (c >= 32 && c < 127 && c != '"' && textBuf_.size() < (textEdit_ == TEXT_INST_NAME ? 27u : 40u)) {
       textBuf_ += (char)c; // names: ASCII only, the pixel font has no other glyphs
     }
   }
@@ -80,15 +75,6 @@ bool App::handleTextKey(const SDL_KeyboardEvent& k) {
     case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER:
       if (textEdit_ == TEXT_INST_NAME) editor_.setInstrumentName(textBuf_);
       else if (textEdit_ == TEXT_SONG_TITLE) editor_.setSongTitle(textBuf_);
-      else if (!textBuf_.empty()) {
-        const int what = textEdit_;
-        textEdit_ = TEXT_NONE;
-        SDL_StopTextInput();
-        const std::string p = cfg_.songPath(textBuf_);
-        if (what == TEXT_OPEN) { openSong(p); }
-        else { path_ = p; save(); }
-        return true;
-      }
       // fall through
     case SDL_SCANCODE_ESCAPE:
       textEdit_ = TEXT_NONE;
@@ -158,6 +144,8 @@ bool App::handleInstrumentKey(const SDL_KeyboardEvent& k) {
       case SDL_SCANCODE_L: editor_.macroToggleLoop(macroKind_, macroCursor_); return true;
       case SDL_SCANCODE_R: editor_.macroToggleRelease(macroKind_, macroCursor_); return true;
       case SDL_SCANCODE_C: editor_.macroClear(macroKind_); macroCursor_ = 0; return true;
+      case SDL_SCANCODE_LEFT: editor_.macroChangeSpeed(macroKind_, -1); return true;
+      case SDL_SCANCODE_RIGHT: editor_.macroChangeSpeed(macroKind_, 1); return true;
       default: break;
     }
   }
@@ -316,7 +304,7 @@ void App::drawInstrumentView(int top, int bottom) {
   }
 
   // --- macro list ---
-  screen_.text(kParamX, kMacroListTop - 1, "MACROS (one value per 60 Hz tick)", focus_ == FOCUS_MACRO ? C_ORANGE : C_DIM);
+  screen_.text(kParamX, kMacroListTop - 1, "MACROS (value per step, spd = ticks)", focus_ == FOCUS_MACRO ? C_ORANGE : C_DIM);
   for (int k = 0; k < MACRO_COUNT; ++k) {
     const Macro& m = in.macros[k];
     int y = kMacroListTop + k;
@@ -325,8 +313,8 @@ void App::drawInstrumentView(int top, int bottom) {
     if (m.empty()) {
       screen_.text(kParamX + 11, y, "off", C_DIM);
     } else {
-      snprintf(b, sizeof b, "len %2d  loop %s  rel %s", (int)m.values.size(),
-               m.loop >= 0 ? hex2(m.loop).c_str() : "--", m.release >= 0 ? hex2(m.release).c_str() : "--");
+      snprintf(b, sizeof b, "len %2d loop %s rel %s spd %d", (int)m.values.size(),
+               m.loop >= 0 ? hex2(m.loop).c_str() : "--", m.release >= 0 ? hex2(m.release).c_str() : "--", m.speed);
       screen_.text(kParamX + 11, y, b, C_WHITE);
     }
   }
@@ -342,13 +330,14 @@ void App::drawInstrumentView(int top, int bottom) {
     "LFO: ch2 modulates ch1 (L/M effects)",
     "",
     "DROP A .WAV ON THE WINDOW",
-    "to import it as a DDA sample",
+    "or CTRL+I: import a DDA sample",
     "",
     "WAVE  ALT+1..9: sine square saw tri",
     "      noise clear invert shift half",
     "      PGUP/PGDN wave  CTRL+W new wave",
-    "MACRO INS/DEL step  ALT+L loop",
+    "MACRO INS/DEL step  ALT+L loop here",
     "      ALT+R release  ALT+C clear",
+    "      ALT+LEFT/RIGHT ticks per step",
     "      PGUP/PGDN macro  mouse: draw",
     "NOTE KEYS preview the instrument",
   };
@@ -377,7 +366,8 @@ void App::drawInstrumentView(int top, int bottom) {
 
   // --- macro editor ---
   const Macro& m = in.macros[macroKind_];
-  snprintf(b, sizeof b, "MACRO %s  (%s)", kMacroLabel[macroKind_], kMacroUnit[macroKind_]);
+  snprintf(b, sizeof b, "MACRO %s  (%s)  %d TICK%s PER STEP", kMacroLabel[macroKind_], kMacroUnit[macroKind_],
+           m.speed, m.speed == 1 ? "" : "S");
   screen_.text(kMacroX, kMacroTop - 2, b, focus_ == FOCUS_MACRO ? C_ORANGE : C_DIM);
   screen_.fill(kMacroX, kMacroTop, kMaxMacroLength, kMacroH, C_BLACK);
   screen_.frame(kMacroX, kMacroTop, kMaxMacroLength, kMacroH, focus_ == FOCUS_MACRO ? C_ORANGE : C_ORANGE_MID);

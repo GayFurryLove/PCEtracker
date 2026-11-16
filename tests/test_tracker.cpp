@@ -120,6 +120,124 @@ static void testArpeggio() {
   CHECK(got[0] == notePeriod(A4));
   CHECK(got[1] == notePeriod(A4 + 4));
   CHECK(got[2] == notePeriod(A4 + 7));
+
+  // 0xy keeps running on the following rows (and new notes) until 000.
+  Song s2;
+  s2.speed = 3;
+  s2.pattern(0).at(0, 0) = note(A4, 0, VOL_NONE, '0', 0x47);
+  s2.pattern(0).at(2, 0) = note(C4);                 // new note: the chord goes on, from its base note
+  s2.pattern(0).at(4, 0) = fxOnly('0', 0x00);        // 000 stops it
+  Player p2(s2);
+  p2.playSong();
+  int per[15];
+  for (int t = 0; t < 15; ++t) { p2.tick(log); per[t] = p2.view(0).period; }
+  CHECK(per[3] == notePeriod(A4) && per[4] == notePeriod(A4 + 4) && per[5] == notePeriod(A4 + 7)); // row 1
+  CHECK(per[6] == notePeriod(C4) && per[7] == notePeriod(C4 + 4) && per[8] == notePeriod(C4 + 7));  // row 2
+  CHECK(per[12] == notePeriod(C4) && per[13] == notePeriod(C4) && per[14] == notePeriod(C4));      // row 4: off
+
+  // Exx: ticks per arpeggio step. 0x0 (no y) alternates two notes.
+  Song s3;
+  s3.speed = 8;
+  s3.pattern(0).at(0, 0) = note(A4, 0, VOL_NONE, '0', 0x70);
+  s3.pattern(0).at(0, 0).fx[1] = Effect('E', 2);
+  Player p3(s3);
+  p3.playSong();
+  int q[8];
+  for (int t = 0; t < 8; ++t) { p3.tick(log); q[t] = p3.view(0).period; }
+  CHECK(q[0] == notePeriod(A4) && q[1] == notePeriod(A4) && q[2] == notePeriod(A4 + 7) &&
+        q[3] == notePeriod(A4 + 7) && q[4] == notePeriod(A4) && q[6] == notePeriod(A4 + 7));
+}
+
+static void testTempoAndStop() {
+  // Tempo 75 = rows twice as long as the speed says.
+  Song s;
+  s.speed = 2;
+  s.pattern(0).at(0, 0) = note(A4, 0, VOL_NONE, 'F', 75);
+  Player p(s);
+  Log log;
+  p.playSong();
+  for (int t = 0; t < 4; ++t) p.tick(log);
+  CHECK(p.row() == 1 && p.tempo() == 75);
+  // Fractional rows: tempo 100, speed 2 -> 3 ticks per row on average.
+  Song s1;
+  s1.speed = 2;
+  s1.tempo = 100;
+  Player p1(s1);
+  p1.playSong();
+  for (int t = 0; t < 30; ++t) p1.tick(log);
+  CHECK(p1.row() == 10);
+
+  // F00 and FFF stop the song: silence at once, the player stops, no loop.
+  for (int k = 0; k < 2; ++k) {
+    Song s2;
+    s2.speed = 1;
+    s2.pattern(0).at(0, 0) = note(A4, 0, 0x1F);
+    s2.pattern(0).at(3, 0) = fxOnly('F', k ? 0xFF : 0x00);
+    Player p2(s2);
+    p2.playSong();
+    for (int t = 0; t < 3; ++t) p2.tick(log);
+    CHECK(p2.playing() && p2.view(0).volume == 31);
+    log.clear();
+    CHECK(p2.tick(log));
+    CHECK(!p2.playing() && p2.songEnded() && !p2.songLooped());
+    CHECK(log.last(0, REG_CONTROL) == 0x80);
+    CHECK(!p2.tick(log));
+  }
+}
+
+static void testWaveOnNoteRowAndMacroSpeed() {
+  // Wxx on the same row as a note: the note uses that wave, not the instrument's.
+  Song s;
+  s.waves.push_back(Wave());
+  for (int i = 0; i < kWaveLength; ++i) s.waves[1].data[i] = (uint8_t)i;
+  Cell c = note(A4, 0, 0x1F, 'W', 1);
+  s.pattern(0).at(0, 0) = c;
+  Player p(s);
+  Log log;
+  p.playSong();
+  p.tick(log);
+  int sel = -1, n = 0, lastData = -1;
+  for (size_t i = 0; i < log.w.size(); ++i) {
+    if (log.w[i].first == REG_SELECT) sel = log.w[i].second;
+    else if (log.w[i].first == REG_WAVE_DATA && sel == 0) { ++n; lastData = log.w[i].second; }
+  }
+  CHECK(n == 32 && lastData == 31); // exactly one upload, of wave 01 (ramp, last value 1F)
+
+  // A wave macro with speed 3: each wave lasts 3 ticks.
+  Song s2;
+  s2.waves.push_back(Wave());
+  s2.speed = 16;
+  Macro& m = s2.instruments[0].macros[MACRO_WAVE];
+  m.values.push_back(0);
+  m.values.push_back(1);
+  m.speed = 3;
+  s2.pattern(0).at(0, 0) = note(A4);
+  Player p2(s2);
+  p2.playSong();
+  int uploads[8];
+  for (int t = 0; t < 8; ++t) { log.clear(); p2.tick(log); uploads[t] = log.count(0, REG_WAVE_DATA); }
+  CHECK(uploads[0] == 32 && uploads[1] == 0 && uploads[2] == 0 && uploads[3] == 32 && uploads[4] == 0);
+
+  // Round trip of the new fields.
+  s2.tempo = 120;
+  std::string err;
+  Song back;
+  CHECK(loadSongText(saveSongText(s2), &back, &err) && back.tempo == 120 &&
+        back.instruments[0].macros[MACRO_WAVE].speed == 3);
+}
+
+static void testRenderStops() {
+  Song s;
+  s.speed = 1;
+  s.pattern(0).at(0, 0) = note(A4, 0, 0x1F);
+  s.pattern(0).at(10, 0) = fxOnly('F', 0x00);
+  RenderOptions opt;
+  opt.fadeSeconds = 0;
+  std::string err;
+  double sec = 0;
+  CHECK(renderSongToWav(s, opt, "stop_test.wav", &err, &sec));
+  CHECK(sec > 0.15 && sec < 0.25); // 10 rows + the stop tick, no second pass
+  remove("stop_test.wav");
 }
 
 static void testPortamento() {
@@ -395,6 +513,9 @@ int main(int argc, char** argv) {
     { "first note register writes", testFirstNoteWrites },
     { "speed and rows", testSpeedAndRows },
     { "arpeggio", testArpeggio },
+    { "tempo and song stop", testTempoAndStop },
+    { "wave on a note row, macro speed", testWaveOnNoteRowAndMacroSpeed },
+    { "render stops at F00", testRenderStops },
     { "portamento", testPortamento },
     { "volume and macros", testVolumeAndMacros },
     { "note off and release", testNoteOffAndRelease },

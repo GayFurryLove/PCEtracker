@@ -78,6 +78,7 @@ Editor::Snapshot Editor::capture(bool wholeSong) const {
     s.pattern = song_.patterns[s.patternIdx];
   }
   s.speed = song_.speed;
+  s.tempo = song_.tempo;
   s.order = order_; s.row = row_; s.ch = ch_; s.col = col_;
   s.instruments = false;
   s.instrument = instrument;
@@ -102,6 +103,7 @@ void Editor::restore(const Snapshot& s) {
     song_.pattern(s.patternIdx) = s.pattern;
   }
   song_.speed = s.speed;
+  song_.tempo = s.tempo;
   order_ = s.order; row_ = s.row; ch_ = s.ch; col_ = s.col;
   selActive_ = false;
   clampCursor();
@@ -224,7 +226,8 @@ void Editor::enterHexDigit(int digit) {
   if (high) {
     ++col_;
   } else {
-    --col_;
+    // Effect: back to the command column, ready for the next row's command.
+    col_ -= (col_ == COL_FX1_LO || col_ == COL_FX2_LO) ? 2 : 1;
     advance();
   }
 }
@@ -235,15 +238,25 @@ void Editor::enterEffectCommand(char cmd) {
   if (!((cmd >= '0' && cmd <= '9') || (cmd >= 'A' && cmd <= 'Z'))) return;
   pushUndo();
   cell().fx[col_ == COL_FX2_CMD ? 1 : 0].cmd = (uint8_t)cmd;
-  advance();
+  ++col_; // the parameter digits come next, on the same row
 }
 
 void Editor::clearAtCursor() {
   if (!editMode) return;
+  if (selActive_) {
+    // A marked block: DEL empties it (like cut, without touching the clipboard).
+    pushUndo();
+    int r0, c0, r1, c1;
+    selectionRect(&r0, &c0, &r1, &c1);
+    for (int r = r0; r <= r1; ++r)
+      for (int c = c0; c <= c1; ++c) pattern().at(r, c) = Cell();
+    selActive_ = false;
+    return;
+  }
   pushUndo();
   Cell& c = cell();
   switch (col_) {
-    case COL_NOTE: c.note = NOTE_NONE; c.instrument = INST_NONE; c.volume = VOL_NONE; break;
+    case COL_NOTE: c.note = NOTE_NONE; break;
     case COL_INST_HI: case COL_INST_LO: c.instrument = INST_NONE; break;
     case COL_VOL_HI: case COL_VOL_LO: c.volume = VOL_NONE; break;
     default: c.fx[col_ >= COL_FX2_CMD ? 1 : 0] = Effect(); break;
@@ -404,6 +417,51 @@ void Editor::changePatternLength(int d) {
   pushUndo();
   pattern().resize(rows);
   clampCursor();
+}
+
+void Editor::changeTempo(int d) {
+  if (!editMode) return;
+  int t = clampi(song_.tempo + d, kMinTempo, kMaxTempo);
+  if (t == song_.tempo) return;
+  pushUndo();
+  song_.tempo = t;
+}
+
+void Editor::setOrderPattern(int v) {
+  v = clampi(v, 0, kMaxPatterns - 1);
+  if (song_.orders[order_] == v) return;
+  pushUndo(true);
+  song_.orders[order_] = (uint8_t)v;
+  song_.pattern(v);
+  clampCursor();
+}
+
+void Editor::moveOrder(int d) {
+  int to = order_ + d;
+  if (to < 0 || to >= (int)song_.orders.size() || d == 0) return;
+  pushUndo(true);
+  uint8_t t = song_.orders[order_];
+  song_.orders[order_] = song_.orders[to];
+  song_.orders[to] = t;
+  order_ = to;
+  clampCursor();
+}
+
+void Editor::insertOrderPattern(int v) {
+  if ((int)song_.orders.size() >= kMaxOrders) return;
+  v = clampi(v, 0, kMaxPatterns - 1);
+  pushUndo(true);
+  song_.orders.insert(song_.orders.begin() + order_ + 1, (uint8_t)v);
+  song_.pattern(v);
+  ++order_;
+  row_ = 0;
+  clampCursor();
+}
+
+int Editor::patternUseCount(int p) const {
+  int n = 0;
+  for (size_t i = 0; i < song_.orders.size(); ++i) n += song_.orders[i] == p;
+  return n;
 }
 
 void Editor::changeSpeed(int d) {
@@ -584,6 +642,15 @@ void Editor::macroToggleRelease(int kind, int i) {
 void Editor::macroClear(int kind) {
   pushInstrumentUndo();
   currentInstrument().macros[kind] = Macro();
+}
+
+void Editor::macroChangeSpeed(int kind, int d) {
+  if (kind < 0 || kind >= MACRO_COUNT) return;
+  Macro& m = currentInstrument().macros[kind];
+  int v = clampi(m.speed + d, 1, kMaxMacroSpeed);
+  if (v == m.speed) return;
+  pushInstrumentUndo();
+  m.speed = v;
 }
 
 int Editor::addSample(const Sample& smp) {

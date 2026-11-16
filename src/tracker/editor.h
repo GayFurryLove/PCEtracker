@@ -63,8 +63,10 @@ public:
   // --- data entry (no-ops when editMode is off) -----------------------------
   void enterNote(int note);         // absolute note 0..95, or NOTE_OFF
   void enterHexDigit(int digit);    // instrument/volume/effect parameter columns
-  void enterEffectCommand(char cmd);// 0-9, A-Z in a command column
-  void clearAtCursor();             // the field under the cursor (note clears note+inst+vol)
+  // 0-9, A-Z in a command column. The cursor moves on to the parameter digits;
+  // after the second digit it comes back to the command column one step down.
+  void enterEffectCommand(char cmd);
+  void clearAtCursor();             // only the field under the cursor, or the whole block if one is marked
   void insertRow();                 // channel only, rows below shift down
   void deleteRow();                 // channel only, rows below shift up (pulls up)
 
@@ -89,6 +91,12 @@ public:
   void clonePatternAtOrder();           // copy of the current pattern, placed after it
   void changePatternLength(int delta);
   void changeSpeed(int delta);
+  void changeTempo(int delta);
+  // Order screen (works without edit mode: arranging is not note entry).
+  void setOrderPattern(int pattern);    // pattern number at the current order position
+  void moveOrder(int delta);            // swap the current entry with a neighbour, cursor follows
+  void insertOrderPattern(int pattern); // new order entry after the current one
+  int patternUseCount(int pattern) const;
 
   // --- instruments, waves, macros (instrument screen) ------------------------
   // Edits apply to `instrument` (the current instrument). Instrument edits are
@@ -109,6 +117,7 @@ public:
   void macroToggleLoop(int kind, int i);
   void macroToggleRelease(int kind, int i);
   void macroClear(int kind);
+  void macroChangeSpeed(int kind, int delta);  // ticks per step, 1..kMaxMacroSpeed
   static void macroRange(int kind, int* lo, int* hi);
   int addSample(const Sample& s);       // appends, assigns to the instrument; returns index (-1 = full)
   void setSongTitle(const std::string& t);
@@ -130,7 +139,7 @@ private:
     Pattern pattern;
     std::vector<uint8_t> orders;
     std::vector<Pattern> patterns;
-    int speed;
+    int speed, tempo;
     int order, row, ch, col;
     bool instruments;
     std::vector<Instrument> insts;

@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "util/file_utf8.h"
 
 namespace pce {
 
@@ -62,10 +63,14 @@ std::string hex2(int v) {
 
 App::App()
   : editor_(song_), renderer_(0), window_(0), sdlRenderer_(0), audioDev_(0), fifoHead_(0),
-    messageTime_(0), showHelp_(false), splash_(false), splashStart_(0), quit_(false), quitArmed_(false), redraw_(true),
+    messageTime_(0), showHelp_(false), helpPage_(0), splash_(false), splashDrawn_(false), splashStart_(0),
+    named_(false), quit_(false), quitArmed_(false), redraw_(true),
     followPlay_(true), jamCh_(-1), jamKey_(SDL_SCANCODE_UNKNOWN), playing_(false),
-    playOrder_(0), playRow_(0), view_(VIEW_PATTERN), focus_(FOCUS_PARAMS), paramRow_(0),
-    waveCursor_(0), macroKind_(0), macroCursor_(0), drag_(0), textEdit_(TEXT_NONE), emptyCell_(0) {
+    playOrder_(0), playRow_(0), playTicks_(0), playSpeed_(6), playTempo_(kDefaultTempo),
+    view_(VIEW_PATTERN), focus_(FOCUS_PARAMS), paramRow_(0),
+    waveCursor_(0), macroKind_(0), macroCursor_(0), drag_(0), textEdit_(TEXT_NONE),
+    browse_(BR_NONE), brCursor_(0), brNameFocus_(false), brClickTime_(0), brClickItem_(-1),
+    orderFocus_(0), patCursor_(0), emptyCell_(0) {
   for (int c = 0; c < kChannels; ++c) { muted_[c] = false; views_[c] = Player::ChannelView(); }
 }
 
@@ -150,7 +155,27 @@ void App::fillAudio(int16_t* out, int frames) {
   fifoHead_ += need;
 }
 
-const Uint32 kSplashMs = 2500; // the logo closes by itself after this long
+const Uint32 kSplashMs = 3000;      // the logo closes by itself after this long
+const Uint32 kSplashGuardMs = 700;  // input in the first moments does not close it
+
+// A key or click closes the logo - but not in its first moments, not key
+// repeats and not keys that were already down when it appeared: X11 replays
+// held keys (the ENTER that started the program) when the window gets focus.
+bool App::splashInputReady(const SDL_Event& e) const {
+  if (!splashDrawn_ || SDL_GetTicks() - splashStart_ < kSplashGuardMs) return false;
+  if (e.type == SDL_KEYDOWN) {
+    const int sc = e.key.keysym.scancode;
+    if (e.key.repeat) return false;
+    if (sc >= 0 && sc < (int)splashHeld_.size() && splashHeld_[(size_t)sc]) return false;
+    return true;
+  }
+  return e.type == SDL_MOUSEBUTTONDOWN;
+}
+
+void App::closeSplash() {
+  splash_ = false;
+  redraw_ = true;
+}
 
 int App::run(int argc, char** argv) {
   SDL_SetMainReady();
@@ -158,18 +183,21 @@ int App::run(int argc, char** argv) {
     fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     return 1;
   }
-  std::string cfgPath = Config::defaultPath();
-  cfg_.load(cfgPath);
+  cfg_.load(Config::defaultPath());
 
   // Options: [song.pcet] [--screenshot out.bmp] [--edit] [--help-screen] [--splash] [--no-splash]
   const char* shot = 0;
   bool bench = false;
   bool noSplash = false;
+  bool shotBrowser = false;
   std::vector<const char*> args;
   for (int i = 1; i < argc; ++i) {
     if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--edit")) editor_.editMode = true;
     else if (!strcmp(argv[i], "--help-screen")) showHelp_ = true;
+    else if (!strcmp(argv[i], "--help-page") && i + 1 < argc) { showHelp_ = true; helpPage_ = atoi(argv[++i]) - 1; }
+    else if (!strcmp(argv[i], "--orders")) view_ = VIEW_ORDER;
+    else if (!strcmp(argv[i], "--browser")) shotBrowser = true;
     else if (!strcmp(argv[i], "--benchmark")) bench = true;
     else if (!strcmp(argv[i], "--splash")) splash_ = true;       // with --screenshot: capture the logo
     else if (!strcmp(argv[i], "--no-splash")) noSplash = true;
@@ -179,7 +207,8 @@ int App::run(int argc, char** argv) {
   if (!args.empty()) {
     path_ = args[0];
     std::string err;
-    FILE* f = fopen(path_.c_str(), "rb");
+    FILE* f = openFile(path_.c_str(), "rb");
+    named_ = true;
     if (f) {
       fclose(f);
       if (!loadSongFile(path_.c_str(), &song_, &err)) {
@@ -192,8 +221,8 @@ int App::run(int argc, char** argv) {
       message("New song: " + path_);
     }
   } else {
-    path_ = cfg_.songPath("untitled.pcet");
-    message("New song. F12 = keys help");
+    path_.clear(); // named by the first save (from the song title, in song_dir)
+    message("New song. F12 = help, CTRL+O = open, F8 = order list");
   }
   editor_.setOrder(0);
 
@@ -204,6 +233,8 @@ int App::run(int argc, char** argv) {
   SDL_StopTextInput(); // only on while a name is being typed
   if (bench) return runBenchmark();
   if (shot) {
+    if (shotBrowser) openBrowser(BR_SAVE);
+    if (splash_) splashDrawn_ = true;
     // Render one frame to a BMP and exit (documentation, UI checks without a display).
     draw();
     int ow = 0, oh = 0;
@@ -220,8 +251,14 @@ int App::run(int argc, char** argv) {
     message(std::string("NO AUDIO: ") + SDL_GetError());
   }
 
-  splash_ = !noSplash;
-  splashStart_ = SDL_GetTicks();
+  splash_ = cfg_.splash && !noSplash;
+  if (splash_) {
+    // Keys already held now are not a "press any key".
+    int n = 0;
+    SDL_PumpEvents();
+    const Uint8* ks = SDL_GetKeyboardState(&n);
+    splashHeld_.assign(ks, ks + n);
+  }
 
   while (!quit_) {
     SDL_Event e;
@@ -229,13 +266,22 @@ int App::run(int argc, char** argv) {
     // Wake up at most `fps` times per second while playing, rarely when idle.
     if (SDL_WaitEventTimeout(&e, playing_ ? 1000 / cfg_.fps : 250)) {
       do {
+        if (splash_ && e.type != SDL_QUIT && e.type != SDL_WINDOWEVENT) {
+          if (e.type == SDL_KEYUP && (int)e.key.keysym.scancode < (int)splashHeld_.size())
+            splashHeld_[(size_t)e.key.keysym.scancode] = 0; // released: may close the logo next time
+          if (splashInputReady(e)) closeSplash();
+          continue;
+        }
         switch (e.type) {
           case SDL_QUIT:
             if (editor_.dirty() && !quitArmed_) { quitArmed_ = true; message("Unsaved changes! Close again to quit, Ctrl+S to save"); }
             else quit_ = true;
             break;
           case SDL_KEYDOWN: handleKey(e.key); break;
-          case SDL_TEXTINPUT: if (textEdit_) handleTextInput(e.text.text); break;
+          case SDL_TEXTINPUT:
+            if (browse_) handleBrowserText(e.text.text);
+            else if (textEdit_) handleTextInput(e.text.text);
+            break;
           case SDL_DROPFILE: importSample(e.drop.file); SDL_free(e.drop.file); break;
           case SDL_MOUSEMOTION: if (drag_) handleMouse(e); break;
           case SDL_MOUSEBUTTONUP:
@@ -251,17 +297,21 @@ int App::run(int argc, char** argv) {
         }
       } while (SDL_PollEvent(&e));
     }
-    if (splash_ && SDL_GetTicks() - splashStart_ > kSplashMs) { splash_ = false; redraw_ = true; }
+    if (splash_ && splashDrawn_ && SDL_GetTicks() - splashStart_ > kSplashMs) closeSplash();
 
     {
       Guard g(audioDev_);
       if (renderer_) {
         Player& p = renderer_->player();
         // Redraw only when something visible changed (position or meters).
-        bool changed = playing_ != p.playing() || playOrder_ != p.order() || playRow_ != p.row();
+        bool changed = playing_ != p.playing() || playOrder_ != p.order() || playRow_ != p.row() ||
+                       playTicks_ / 60 != p.ticksPlayed() / 60 || playSpeed_ != p.speed() || playTempo_ != p.tempo();
         playing_ = p.playing();
         playOrder_ = p.order();
         playRow_ = p.row();
+        playTicks_ = p.ticksPlayed();
+        playSpeed_ = p.speed();
+        playTempo_ = p.tempo();
         for (int c = 0; c < kChannels; ++c) {
           Player::ChannelView v = p.view(c);
           if (v.active != views_[c].active || v.volume != views_[c].volume || v.note != views_[c].note ||
@@ -299,6 +349,13 @@ void App::playSong(bool fromCursor) {
   for (int c = 0; c < kChannels; ++c) renderer_->player().setMute(c, muted_[c]);
 }
 
+void App::playFromStart() {
+  if (!renderer_) return;
+  Guard g(audioDev_);
+  renderer_->player().playSong(0, 0);
+  for (int c = 0; c < kChannels; ++c) renderer_->player().setMute(c, muted_[c]);
+}
+
 void App::playPattern() {
   if (!renderer_) return;
   Guard g(audioDev_);
@@ -326,26 +383,43 @@ void App::openSong(const std::string& path) {
     renderer_->renderTick(scratch);
   }
   path_ = path;
+  named_ = true;
   quitArmed_ = false;
   message("Loaded " + path_);
 }
 
+// File name for the song: the current one, or (new song) the title made
+// file-safe - "My Song!" -> "my_song.pcet" - or untitled.pcet.
+std::string App::songFileName() const {
+  if (named_ && !path_.empty()) return fs::fileOf(path_);
+  std::string n;
+  for (size_t i = 0; i < song_.title.size() && n.size() < 40; ++i) {
+    unsigned char c = (unsigned char)song_.title[i];
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') n += (char)c;
+    else if (c >= 'A' && c <= 'Z') n += (char)(c - 'A' + 'a');
+    else if (!n.empty() && n[n.size() - 1] != '_') n += '_';
+  }
+  while (!n.empty() && n[n.size() - 1] == '_') n.erase(n.size() - 1);
+  return (n.empty() ? std::string("untitled") : n) + ".pcet";
+}
+
 void App::save() {
+  if (!named_ || path_.empty()) { openBrowser(BR_SAVE); return; } // first save: pick the folder and name
+  saveAs(path_);
+}
+
+void App::saveAs(const std::string& path) {
   std::string err;
   bool ok;
   {
     Guard g(audioDev_);
-    ok = saveSongFile(path_.c_str(), song_, &err);
+    ok = saveSongFile(path.c_str(), song_, &err);
   }
-  if (ok) { editor_.markSaved(); quitArmed_ = false; message("Saved " + path_); }
+  if (ok) { path_ = path; named_ = true; editor_.markSaved(); quitArmed_ = false; message("Saved " + path_); }
   else message("SAVE FAILED: " + err);
 }
 
-void App::exportWav() {
-  std::string out = path_;
-  size_t dot = out.rfind('.');
-  if (dot != std::string::npos && out.find_first_of("/\\", dot) == std::string::npos) out.erase(dot);
-  out += ".wav";
+void App::exportWav(const std::string& out) {
   RenderOptions opt;
   opt.revision = cfg_.revisionA ? PSG_REV_HUC6280A : PSG_REV_HUC6280;
   opt.sampleRate = 44100;
@@ -361,11 +435,7 @@ void App::exportWav() {
   message(ok ? "Exported " + out + b : "EXPORT FAILED: " + err);
 }
 
-void App::exportHesFileAction() {
-  std::string out = path_;
-  size_t dot = out.rfind('.');
-  if (dot != std::string::npos && out.find_first_of("/\\", dot) == std::string::npos) out.erase(dot);
-  out += ".hes";
+void App::exportHesFileAction(const std::string& out) {
   ExportStats st;
   VerifyReport vr;
   std::string err;
@@ -380,11 +450,7 @@ void App::exportHesFileAction() {
   message(ok ? "Exported " + out + b : "HES EXPORT FAILED: " + err);
 }
 
-void App::exportRomFileAction() {
-  std::string out = path_;
-  size_t dot = out.rfind('.');
-  if (dot != std::string::npos && out.find_first_of("/\\", dot) == std::string::npos) out.erase(dot);
-  out += ".pce";
+void App::exportRomFileAction(const std::string& out) {
   ExportStats st;
   VerifyReport vr;
   std::string err;
@@ -449,19 +515,29 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
   redraw_ = true;
   if (!ctrl || (sc != SDL_SCANCODE_Q && sc != SDL_SCANCODE_O)) quitArmed_ = false; // any other key cancels "quit?"
 
-  if (splash_) { splash_ = false; return; } // any key closes the logo
+  if (splash_) return; // handled in the event loop
   if (showHelp_) {
+    // Help pages: LEFT/RIGHT, PGUP/PGDN or 1-7 switch pages; ESC or F12 closes.
+    const int pages = 7;
     if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_F12) showHelp_ = false;
+    else if (sc == SDL_SCANCODE_RIGHT || sc == SDL_SCANCODE_PAGEDOWN || sc == SDL_SCANCODE_TAB)
+      helpPage_ = (helpPage_ + 1) % pages;
+    else if (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_PAGEUP) helpPage_ = (helpPage_ + pages - 1) % pages;
+    else if (sc >= SDL_SCANCODE_1 && sc < SDL_SCANCODE_1 + pages) helpPage_ = sc - SDL_SCANCODE_1;
     return;
   }
 
   Guard g(audioDev_); // every edit below changes data the audio thread reads
 
+  if (browse_) { handleBrowserKey(k); return; }
   if (textEdit_) { handleTextKey(k); return; }
   if (sc == SDL_SCANCODE_F9) { view_ = VIEW_PATTERN; return; }
   if (sc == SDL_SCANCODE_F10) { view_ = VIEW_INSTRUMENT; return; }
+  if (sc == SDL_SCANCODE_F8 || sc == SDL_SCANCODE_F11) { view_ = VIEW_ORDER; patCursor_ = editor_.patternIndex(); return; }
+  if (sc == SDL_SCANCODE_F7) { playFromStart(); return; }
   if (ctrl && sc == SDL_SCANCODE_T) { startTextEdit(TEXT_SONG_TITLE); return; }
   if (view_ == VIEW_INSTRUMENT && handleInstrumentKey(k)) return;
+  if (view_ == VIEW_ORDER && handleOrderKey(k)) return;
 
   // --- global keys ---
   if (ctrl) {
@@ -470,14 +546,15 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
         if (editor_.dirty() && !quitArmed_) { quitArmed_ = true; message("Unsaved changes! Ctrl+Q again to quit, Ctrl+S to save"); }
         else quit_ = true;
         return;
-      case SDL_SCANCODE_S: if (shift) startTextEdit(TEXT_SAVE_AS); else save(); return;
+      case SDL_SCANCODE_S: if (shift) openBrowser(BR_SAVE); else save(); return;
       case SDL_SCANCODE_O:
         if (editor_.dirty() && !quitArmed_) { quitArmed_ = true; message("Unsaved changes! CTRL+O again to open anyway, CTRL+S to save"); }
-        else { quitArmed_ = false; startTextEdit(TEXT_OPEN); }
+        else { quitArmed_ = false; openBrowser(BR_OPEN); }
         return;
-      case SDL_SCANCODE_E: exportWav(); return;
-      case SDL_SCANCODE_H: exportHesFileAction(); return;
-      case SDL_SCANCODE_R: exportRomFileAction(); return;
+      case SDL_SCANCODE_E: openBrowser(BR_WAV); return;
+      case SDL_SCANCODE_H: openBrowser(BR_HES); return;
+      case SDL_SCANCODE_R: openBrowser(BR_ROM); return;
+      case SDL_SCANCODE_I: openBrowser(BR_SAMPLE); return;
       case SDL_SCANCODE_Z: if (shift ? editor_.redo() : editor_.undo()) message(shift ? "Redo" : "Undo"); return;
       case SDL_SCANCODE_Y: if (editor_.redo()) message("Redo"); return;
       case SDL_SCANCODE_C: editor_.copy(); message("Copied"); return;
@@ -512,7 +589,13 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
     }
     return;
   }
+  if (alt && shift && (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT)) {
+    if (!editor_.editMode) message("Edit mode is off: SPACE turns it on");
+    editor_.changeTempo(sc == SDL_SCANCODE_LEFT ? -1 : 1);
+    return;
+  }
   if (alt) {
+    if (!editor_.editMode) message("Edit mode is off: SPACE turns it on");
     switch (sc) {
       case SDL_SCANCODE_UP: editor_.changePatternLength(-1); return;
       case SDL_SCANCODE_DOWN: editor_.changePatternLength(1); return;
@@ -543,9 +626,14 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
     case SDL_SCANCODE_F4: if (editor_.instrument + 1 < (int)song_.instruments.size()) ++editor_.instrument; return;
     case SDL_SCANCODE_F5: if (editor_.editStep > 0) --editor_.editStep; return;
     case SDL_SCANCODE_F6: if (editor_.editStep < 16) ++editor_.editStep; return;
-    case SDL_SCANCODE_F12: showHelp_ = true; return;
+    case SDL_SCANCODE_F12:
+      showHelp_ = true;
+      helpPage_ = view_ == VIEW_INSTRUMENT ? 4 : view_ == VIEW_ORDER ? 5 : 0;
+      return;
     default: break;
   }
+
+  if (view_ != VIEW_PATTERN) return; // no note entry outside the pattern screen
 
   // --- navigation (Shift extends the block) ---
   bool moved = true;
@@ -575,6 +663,10 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
   }
 
   // --- editing ---
+  // DEL empties the field under the cursor (or a marked block), BACKSPACE
+  // deletes the row of this channel and pulls the rows below up.
+  const bool editKey = sc == SDL_SCANCODE_DELETE || sc == SDL_SCANCODE_BACKSPACE || sc == SDL_SCANCODE_INSERT;
+  if (editKey && !editor_.editMode) { message("Edit mode is off: SPACE turns it on"); return; }
   switch (sc) {
     case SDL_SCANCODE_DELETE: editor_.clearAtCursor(); return;
     case SDL_SCANCODE_BACKSPACE: editor_.deleteRow(); return;
@@ -598,17 +690,24 @@ void App::handleKey(const SDL_KeyboardEvent& k) {
   }
   if (col == COL_FX1_CMD || col == COL_FX2_CMD) {
     char c = commandKey(sc);
+    if (c && !editor_.editMode) message("Edit mode is off: SPACE turns it on");
     if (c) editor_.enterEffectCommand(c);
     return;
   }
   int h = hexKey(sc);
+  if (h >= 0 && !editor_.editMode) message("Edit mode is off: SPACE turns it on");
   if (h >= 0) editor_.enterHexDigit(h);
 }
 
 void App::handleMouse(const SDL_Event& e) {
   redraw_ = true;
-  if (splash_) { if (e.type != SDL_MOUSEMOTION) splash_ = false; return; }
+  if (splash_) return; // handled in the event loop
   Guard g(audioDev_);
+  if (browse_) { handleBrowserMouse(e); return; }
+  if (view_ == VIEW_ORDER && !showHelp_ && (e.type != SDL_MOUSEBUTTONDOWN || e.button.y / kCell >= kPatHeader)) {
+    handleOrderMouse(e);
+    return;
+  }
   if (view_ == VIEW_INSTRUMENT && !showHelp_ && (e.type != SDL_MOUSEBUTTONDOWN || e.button.y / kCell >= kPatHeader)) {
     handleInstrumentMouse(e);
     return;
@@ -651,15 +750,22 @@ void App::handleMouse(const SDL_Event& e) {
 
 void App::draw() {
   screen_.clear();
-  if (splash_) { drawSplash(); screen_.present(); return; }
+  if (splash_) {
+    drawSplash();
+    screen_.present();
+    if (!splashDrawn_) { splashDrawn_ = true; splashStart_ = SDL_GetTicks(); }
+    return;
+  }
   drawHeader();
   drawOrders(kOrderX, kTopRow, kPanelRows);
   drawInstruments(kInstX, kTopRow, kPanelRows);
   drawSongInfo(kSongX, kTopRow);
   drawChannels(kChanPanelX, kTopRow);
   if (view_ == VIEW_INSTRUMENT) drawInstrumentView(kPatHeader, kPatBottom);
+  else if (view_ == VIEW_ORDER) drawOrderView(kPatHeader, kPatBottom);
   else drawPattern(kPatTop, kPatBottom);
   drawStatus();
+  if (browse_) drawBrowser();
   if (showHelp_) drawHelp();
   screen_.present();
 }
@@ -693,7 +799,8 @@ void App::drawSplash() {
 void App::drawHeader() {
   screen_.fill(0, 0, kCols, 1, C_ORANGE);
   screen_.text(1, 0, "PCETRACKER", C_BLACK);
-  std::string name = path_ + (editor_.dirty() ? " *" : "");
+  std::string name = (named_ ? path_ : songFileName() + " (new)") + (editor_.dirty() ? " *" : "");
+  if (name.size() > 70) name = "..." + name.substr(name.size() - 67);
   screen_.text(13, 0, name.c_str(), C_BLACK);
   char b[64];
   snprintf(b, sizeof b, "%s  %d HZ", cfg_.revisionA ? "HUC6280A" : "HUC6280", cfg_.audioRate);
@@ -740,18 +847,30 @@ void App::drawSongInfo(int x, int y) {
   if (title.size() > 26) title = title.substr(title.size() - 26);
   snprintf(b, sizeof b, "%-26.26s", title.c_str());
   screen_.text(x + 1, y + 1, b, C_WHITE);
+  // While playing, speed and tempo show what the player uses now (Fxx changes them).
+  std::string speed = hex2(playing_ ? playSpeed_ : song_.speed);
+  if (playing_ && playSpeed_ != song_.speed) speed += "  (SONG " + hex2(song_.speed) + ")";
+  char tb[32];
+  snprintf(tb, sizeof tb, "%d", playing_ ? playTempo_ : song_.tempo);
+  std::string tempo = tb;
+  if ((playing_ ? playTempo_ : song_.tempo) == kDefaultTempo) tempo += " (NORMAL)";
+  // Stopwatch: time since playback started (frames of 59.826 Hz).
+  const unsigned secs = (unsigned)((double)playTicks_ * kFrameClocks / Psg::kClockHz);
+  char pb[32];
+  snprintf(pb, sizeof pb, "%s %02u:%02u", playing_ ? "PLAYING" : "STOPPED", secs / 60, secs % 60);
   struct { const char* k; std::string v; } rows[] = {
-    { "SPEED", hex2(song_.speed) },
+    { "SPEED", speed },
+    { "TEMPO", tempo },
     { "PATTERN", hex2(editor_.patternIndex()) },
     { "ROWS", hex2(editor_.pattern().rows) },
     { "OCTAVE", std::string(1, (char)('1' + editor_.octave)) },
     { "STEP", hex2(editor_.editStep) },
-    { "EDIT", editor_.editMode ? "ON" : "OFF" },
-    { "PLAY", playing_ ? "PLAYING" : "STOPPED" },
+    { "EDIT", editor_.editMode ? "ON" : "OFF  (SPACE)" },
+    { "PLAY", pb },
   };
-  for (int i = 0; i < 7; ++i) {
+  for (int i = 0; i < 8; ++i) {
     screen_.text(x + 1, y + 3 + i, rows[i].k, C_ORANGE);
-    screen_.text(x + 10, y + 3 + i, rows[i].v.c_str(), C_WHITE);
+    screen_.text(x + 10, y + 3 + i, rows[i].v.c_str(), i == 7 && !playing_ ? C_DIM : C_WHITE);
   }
 }
 
@@ -886,57 +1005,18 @@ void App::drawPattern(int top, int bottom) {
 
 void App::drawStatus() {
   screen_.fill(0, kRows - 1, kCols, 1, C_ORANGE);
-  if (textEdit_ == TEXT_OPEN || textEdit_ == TEXT_SAVE_AS) {
-    std::string p = (textEdit_ == TEXT_OPEN ? "OPEN: " : "SAVE AS: ") + textBuf_ + "_";
-    if (p.size() > (size_t)kCols - 2) p = "..." + p.substr(p.size() - (kCols - 5));
-    screen_.text(1, kRows - 1, p.c_str(), C_BLACK);
-    return;
+  std::string s = message_;
+  if (s.empty()) {
+    if (view_ == VIEW_INSTRUMENT)
+      s = "TAB focus  ARROWS edit  NOTE KEYS preview  ENTER play/stop  F9 patterns  F8 orders  F12 help";
+    else if (view_ == VIEW_ORDER)
+      s = "ARROWS move  0-F pattern no.  SHIFT+UP/DN move entry  INS/DEL  TAB pattern list  F9 edit  F12 help";
+    else if (!(s = effectHint()).empty()) {}
+    else
+      s = "SPACE edit  ENTER play/stop  F7 play from start  F1/F2 octave  F3/F4 instr  F8 orders  F10 instr  F12 help";
   }
-  std::string s = message_.empty()
-      ? std::string(view_ == VIEW_INSTRUMENT
-                    ? "TAB focus  ARROWS edit  NOTE KEYS preview  ENTER play/stop  F9 patterns  F12 help"
-                    : "SPACE edit  ENTER play/stop  SHIFT+ENTER loop  F1/F2 octave  F3/F4 instr  F10 instrument  F12 help")
-      : message_;
+  if (s.size() > (size_t)kCols - 2) s = s.substr(0, kCols - 2);
   screen_.text(1, kRows - 1, s.c_str(), C_BLACK);
-}
-
-void App::drawHelp() {
-  static const char* lines[] = {
-    "KEYS                                         (ESC or F12 closes)",
-    "",
-    "Z S X D C V ... /   notes, lower octave       Q 2 W 3 E ... P   upper octave",
-    "1                   note off (OFF)            DEL  clear field   INS / BKSP  insert / delete row",
-    "0-9 A-F             instrument, volume, effect parameter digits",
-    "letters, digits     effect command (in the command column)",
-    "",
-    "SPACE               edit mode on/off          ESC  stop / clear block",
-    "ENTER               play song / stop          SHIFT+ENTER  loop pattern   CTRL+ENTER  play from row",
-    "ARROWS PGUP PGDN    move                      TAB / SHIFT+TAB  next / previous channel",
-    "HOME END            first / last row          SHIFT+LEFT/RIGHT  channel jump",
-    "",
-    "SHIFT+ARROWS        mark block                CTRL+A  block = channel, again = pattern",
-    "CTRL+C X V          copy / cut / paste        CTRL+UP/DOWN  transpose (+SHIFT: octave)",
-    "CTRL+Z / CTRL+Y     undo / redo",
-    "",
-    "CTRL+LEFT/RIGHT     previous / next order     CTRL+PGUP/PGDN  pattern number at order",
-    "CTRL+INS / CTRL+DEL insert / delete order     CTRL+N  new pattern    CTRL+D  clone pattern",
-    "ALT+UP/DOWN         pattern length -/+1       ALT+PGUP/PGDN  length -/+16",
-    "ALT+LEFT/RIGHT      song speed -/+",
-    "",
-    "F1/F2 octave   F3/F4 instrument   F5/F6 edit step   CTRL+1..6 mute   CTRL+SHIFT+1..6 solo",
-    "F9 pattern screen   F10 instrument screen   CTRL+T song title   drop .wav = DDA sample",
-    "CTRL+O open   CTRL+S save   CTRL+SHIFT+S save as   CTRL+Q quit",
-    "CTRL+E export WAV   CTRL+H export HES   CTRL+R export HuCard ROM (.pce)",
-    "",
-    "Effects: 0 arp  1/2 slide  3 porta  4 vibrato  8 pan  A vol slide  B jump  C cut  D break",
-    "         F speed  G main vol  L/M LFO  N noise (ch5-6)  P detune  R retrig  W wave",
-    "Full list: docs/EFFECTS.md",
-  };
-  const int n = (int)(sizeof lines / sizeof lines[0]);
-  const int x = 6, y = 18, w = kCols - 12, h = n + 2;
-  screen_.fill(x, y, w, h, C_BLACK);
-  screen_.frame(x, y, w, h, C_ORANGE);
-  for (int i = 0; i < n; ++i) screen_.text(x + 2, y + 1 + i, lines[i], i == 0 ? C_ORANGE : C_WHITE);
 }
 
 // --- benchmark (pcetracker song.pcet --benchmark) --------------------------------

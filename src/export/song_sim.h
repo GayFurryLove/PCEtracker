@@ -40,9 +40,12 @@ class SongSim {
 public:
   explicit SongSim(const Song& song);
   // Runs one frame. Returns true if it was the last frame of a pass through
-  // the song (the song wrapped). `segments` (optional) collects DDA output.
+  // the song (the song wrapped) - or, once an F00/FFF stopped the song, for
+  // that frame and every silent frame after it. `segments` (optional)
+  // collects DDA output.
   bool frame(SimFrame* out, std::vector<DdaSegment>* segments);
   int frameCount() const { return frames_; }
+  bool ended() const { return player_.songEnded(); }
 
 private:
   Player player_;

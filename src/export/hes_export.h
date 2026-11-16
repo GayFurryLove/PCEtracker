@@ -20,7 +20,9 @@ struct ExportStats {
   size_t sampleBytes;
   size_t imageBytes;    // whole image, bank aligned
   bool cleanLoop;       // the third pass produced the same stream as the second
-  ExportStats() : framesIntro(0), framesLoop(0), streamBytes(0), sampleBytes(0), imageBytes(0), cleanLoop(true) {}
+  bool ends;            // the song stops (F00 / FFF): no loop, silence after framesIntro
+  ExportStats() : framesIntro(0), framesLoop(0), streamBytes(0), sampleBytes(0), imageBytes(0), cleanLoop(true),
+                  ends(false) {}
 };
 
 // Builds the bank-aligned program image (driver + samples + stream).

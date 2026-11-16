@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "util/file_utf8.h"
 
 namespace pce {
 
@@ -114,11 +115,19 @@ bool buildSongImage(const Song& song, const DriverOptions& opt, std::vector<uint
   const int streamBank = 1 + sampleBanks;
 
   // --- stream: first pass, repeating pass, jump back ---
+  // A song that stops (F00 / FFF) ends with one empty frame that repeats forever.
   SongSim sim(song);
   std::vector<uint8_t> pass1, pass2, pass3;
   int n1 = encodePass(song, sim, &pass1);
-  int n2 = n1 < 0 ? -1 : encodePass(song, sim, &pass2);
-  int n3 = n2 < 0 ? -1 : encodePass(song, sim, &pass3);
+  const bool ends = n1 >= 0 && sim.ended();
+  int n2 = 1, n3 = 1;
+  if (ends) {
+    pass2.push_back(SC_END_FRAME);
+    pass3 = pass2;
+  } else {
+    n2 = n1 < 0 ? -1 : encodePass(song, sim, &pass2);
+    n3 = n2 < 0 ? -1 : encodePass(song, sim, &pass3);
+  }
   if (n1 < 0 || n2 < 0 || n3 < 0) { *err = "song is longer than 20 minutes or never loops"; return false; }
   std::vector<uint8_t> stream = pass1;
   const size_t loopAt = stream.size();
@@ -163,6 +172,7 @@ bool buildSongImage(const Song& song, const DriverOptions& opt, std::vector<uint
     stats->sampleBytes = sampleData.size();
     stats->imageBytes = image->size();
     stats->cleanLoop = pass3 == pass2;
+    stats->ends = ends;
   }
   return true;
 }
@@ -196,7 +206,7 @@ bool exportHesFile(const Song& song, const char* path, ExportStats* stats, Verif
   bool ok = verifyHes(song, hes, 0, &vr);
   if (rep) *rep = vr;
   if (!ok) { *err = "self-check failed: " + vr.detail; return false; }
-  FILE* f = fopen(path, "wb");
+  FILE* f = openFile(path, "wb");
   if (!f) { *err = std::string("cannot write ") + path; return false; }
   bool wrote = fwrite(&hes[0], 1, hes.size(), f) == hes.size();
   wrote = (fclose(f) == 0) && wrote;

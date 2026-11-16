@@ -8,6 +8,7 @@ PCETRACKER 1
 title "Название"
 author "Автор"
 speed 6
+tempo 120                  # необязательно, 32-254, по умолчанию 150
 
 wave 00 1F1F...00          # 32 отсчёта по 2 hex-цифры, 00-1F (5 бит)
 
@@ -17,6 +18,7 @@ instrument 00 "Lead"
   resetphase               # необязательно
   macro vol loop 2 release 5 : 31 28 25 22 20 18 10 0
   macro arp loop 0 : 0 4 7
+  macro wave speed 4 loop 0 : 0 1 2 3   # speed = тиков на шаг (1-64), необязательно
 end
 
 pattern 00 rows 32

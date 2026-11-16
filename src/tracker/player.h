@@ -60,10 +60,13 @@ public:
   bool playing() const { return playing_; }
   // True once the song wrapped (end of order list or a backward Bxx jump).
   bool songLooped() const { return looped_; }
+  // True once an F00 / FFF row stopped the song (it does not loop then).
+  bool songEnded() const { return ended_; }
   void clearLooped() { looped_ = false; }
   int order() const { return order_; }
   int row() const { return row_; }
   int speed() const { return speed_; }
+  int tempo() const { return tempo_; }
   uint64_t ticksPlayed() const { return ticks_; }
 
   // Current output state per channel, for UI meters and tests.
@@ -71,7 +74,7 @@ public:
   ChannelView view(int ch) const;
 
 private:
-  struct MacroPos { int pos; bool done; };
+  struct MacroPos { int pos; int wait; bool done; };
 
   struct Channel {
     bool active;         // a note is sounding
@@ -83,8 +86,11 @@ private:
     MacroPos macro[MACRO_COUNT];
     bool released;
     int pitchAccum;      // MACRO_PITCH accumulator
+    // arpeggio: 0xy keeps running (across rows and notes) until 000
+    uint8_t arp, arpSpeed;   // arpSpeed = ticks per arpeggio step (Exx)
+    int arpStep, arpTimer;
     // effects of the current row
-    uint8_t arp, volSlide, portaUp, portaDown;
+    uint8_t volSlide, portaUp, portaDown;
     bool tonePorta, vibratoOn;
     uint8_t cutAt, retrigEvery;
     // effect memory
@@ -128,6 +134,8 @@ private:
 
   bool playing_, stopping_, patternMode_, looped_, jam_;
   int order_, row_, tick_, speed_;
+  int tempo_, tempoCarry_, rowTicks_; // rowTicks_ = length of the current row in ticks
+  bool halt_, ended_;
   int loopPattern_;
   int breakRow_, jumpOrder_; // -1 = none
   uint64_t ticks_;

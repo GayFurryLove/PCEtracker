@@ -24,6 +24,8 @@ const int kWaveMax = 31;        // 5-bit samples
 const int kVolumeMax = 31;      // 5-bit channel volume
 const int kMaxMacroLength = 64;
 const int kEffectColumns = 2;
+const int kDefaultTempo = 150;    // row length = speed ticks exactly
+const int kMinTempo = 32, kMaxTempo = 254;
 const int kMaxSamples = 64;
 const int kMaxSampleLength = 65535;   // 5-bit samples; ROM space is the real limit
 // DDA samples are played by the driver from the HuC6280 timer: 7.16 MHz / 1024.
@@ -66,16 +68,18 @@ struct Pattern {
   void resize(int r);
 };
 
-// Software envelope ("macro"): one value per 60 Hz tick.
+// Software envelope ("macro"): one value per `speed` 60 Hz ticks.
 // loop < 0: hold the last value. release >= 0: on NOTE_OFF jump past it.
+const int kMaxMacroSpeed = 64;
 struct Macro {
   std::vector<int8_t> values;
   int loop;
   int release;
-  Macro() : loop(-1), release(-1) {}
+  int speed;        // ticks per step, 1..kMaxMacroSpeed (wave sequences: how long each wave lasts)
+  Macro() : loop(-1), release(-1), speed(1) {}
   bool empty() const { return values.empty(); }
   bool operator==(const Macro& o) const {
-    return values == o.values && loop == o.loop && release == o.release;
+    return values == o.values && loop == o.loop && release == o.release && speed == o.speed;
   }
 };
 
@@ -119,6 +123,7 @@ struct Song {
   std::string title;
   std::string author;
   int speed;                         // ticks per row (1..31), one tick = one 60 Hz frame
+  int tempo;                         // 32..254, 150 = normal: a row lasts speed * 150 / tempo ticks
   std::vector<uint8_t> orders;       // pattern index per order position
   std::vector<Pattern> patterns;
   std::vector<Instrument> instruments;

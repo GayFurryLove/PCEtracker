@@ -92,6 +92,7 @@ bool SongSim::frame(SimFrame* out, std::vector<DdaSegment>* segments) {
   timerNext_ -= kFrameClocks;
   ++frames_;
 
+  if (player_.songEnded()) return true;
   if (player_.songLooped()) {
     player_.clearLooped();
     // The real timer phase is unknown anyway (it differs by at most one

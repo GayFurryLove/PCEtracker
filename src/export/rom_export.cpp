@@ -4,6 +4,7 @@
 #include "export/hes_export.h"
 
 #include <stdio.h>
+#include "util/file_utf8.h"
 
 namespace pce {
 
@@ -36,8 +37,8 @@ DriverOptions titleScreen(const Song& song, const ExportStats& st) {
   o.screen.push_back(centered(10, song.title.empty() ? "untitled" : song.title, true));
   if (!song.author.empty()) o.screen.push_back(centered(12, "by " + song.author, false));
   char b[40];
-  const int secs = (int)(st.framesLoop / 59.826 + 0.5);
-  snprintf(b, sizeof b, "loop %d:%02d", secs / 60, secs % 60);
+  const int secs = (int)((st.ends ? st.framesIntro : st.framesLoop) / 59.826 + 0.5);
+  snprintf(b, sizeof b, "%s %d:%02d", st.ends ? "length" : "loop", secs / 60, secs % 60);
   o.screen.push_back(centered(16, b, false));
   o.screen.push_back(centered(24, "HuC6280 PSG - 6 channels", false));
   return o;
@@ -71,7 +72,7 @@ bool exportRomFile(const Song& song, const char* path, ExportStats* stats, Verif
   bool ok = verifyRom(song, rom, 0, &vr);
   if (rep) *rep = vr;
   if (!ok) { *err = "self-check failed: " + vr.detail; return false; }
-  FILE* f = fopen(path, "wb");
+  FILE* f = openFile(path, "wb");
   if (!f) { *err = std::string("cannot write ") + path; return false; }
   bool wrote = fwrite(&rom[0], 1, rom.size(), f) == rom.size();
   wrote = (fclose(f) == 0) && wrote;

@@ -17,14 +17,21 @@ struct Config {
   int audioRate;      // output sample rate
   int audioBuffer;    // samples per audio callback (bigger = safer on slow CPUs)
   bool revisionA;     // HuC6280A (true) or HuC6280 (false)
-  std::string songDir;// folder for new songs and relative Open/Save As names ("" = current dir)
+  bool splash;        // startup logo with the mascot (config key "demo")
+  std::string songDir;// start folder of the file browser, folder for new songs ("" = current dir)
+  std::string path;   // the file that was loaded
   Config();
 
   // `name` as is if it is absolute or songDir is empty, else songDir/name.
   std::string songPath(const std::string& name) const;
+  // Absolute folder the file browser starts in for a new song.
+  std::string startDir() const;
 
-  // Loads `path`; writes a commented default file if it does not exist.
+  // Loads `path`; writes a commented default file if it does not exist and
+  // appends keys that an older file does not have yet (with their comments).
   void load(const std::string& path);
+  // pcetracker.cfg next to the program or in the current folder (portable
+  // install), otherwise the per-user file (Linux ~/.local/share/pcetracker/...).
   static std::string defaultPath();
 };
 
